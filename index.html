@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080607">
+  <title>DePLay — видео, фото и звук</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <svg class="svg-sprite" aria-hidden="true">
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.2 5.62a.8.8 0 0 1 1.2-.68l10 6.38a.8.8 0 0 1 0 1.36l-10 6.38a.8.8 0 0 1-1.2-.68V5.62Z" fill="currentColor"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6.8" y="5" width="3.6" height="14" fill="currentColor"/><rect x="13.6" y="5" width="3.6" height="14" fill="currentColor"/></symbol>
+    <symbol id="i-frame-prev" viewBox="0 0 24 24"><path d="M5.6 5.6v12.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M18.4 6.55v10.9L9.3 12z" fill="currentColor"/></symbol>
+    <symbol id="i-frame-next" viewBox="0 0 24 24"><path d="M18.4 5.6v12.8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M5.6 6.55v10.9L14.7 12z" fill="currentColor"/></symbol>
+    <symbol id="i-volume-high" viewBox="0 0 24 24"><path d="M4 9.4h3.1L12 5.7v12.6l-4.9-3.7H4V9.4Z" fill="currentColor"/><path d="M15.2 8.3a5.2 5.2 0 0 1 0 7.4M17.8 5.7a8.7 8.7 0 0 1 0 12.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-volume-low" viewBox="0 0 24 24"><path d="M4 9.4h3.1L12 5.7v12.6l-4.9-3.7H4V9.4Z" fill="currentColor"/><path d="M15.2 8.5a5 5 0 0 1 0 7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-volume-mute" viewBox="0 0 24 24"><path d="M4 9.4h3.1L12 5.7v12.6l-4.9-3.7H4V9.4Z" fill="currentColor"/><path d="m15.5 9 5 6M20.5 9l-5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-loop" viewBox="0 0 24 24"><path d="M4 11V9.2A3.2 3.2 0 0 1 7.2 6H19" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m15.8 2.8 3.4 3.2-3.4 3.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M20 13v1.8a3.2 3.2 0 0 1-3.2 3.2H5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path d="m8.2 21.2-3.4-3.2 3.4-3.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-pip" viewBox="0 0 24 24"><rect x="3.2" y="5" width="17.6" height="14" fill="none" stroke="currentColor" stroke-width="1.7"/><rect x="12" y="11.4" width="6.6" height="5.1" fill="currentColor"/></symbol>
+    <symbol id="i-fullscreen" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-fullscreen-exit" viewBox="0 0 24 24"><path d="M4 9h5V4M20 9h-5V4M4 15h5v5M20 15h-5v5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 16V4m0 0L7.2 8.8M12 4l4.8 4.8M4.5 15.5v2.2A2.3 2.3 0 0 0 6.8 20h10.4a2.3 2.3 0 0 0 2.3-2.3v-2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-film" viewBox="0 0 24 24"><rect x="3.2" y="4.5" width="17.6" height="15" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M7.4 4.5v15M16.6 4.5v15M3.2 9.3h4.2M3.2 14.7h4.2M16.6 9.3h4.2M16.6 14.7h4.2" fill="none" stroke="currentColor" stroke-width="1.5"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><rect x="3.2" y="4.5" width="17.6" height="15" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="9" cy="9.5" r="1.7" fill="currentColor"/><path d="m4.2 17.3 5.2-5 4.2 4 2.7-2.7 3.7 3.7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-music" viewBox="0 0 24 24"><path d="M9.2 17.4V6.1l9.6-2v11.3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/><circle cx="6.7" cy="17.7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="16.3" cy="15.7" r="2.5" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M9.3 7V4.8h5.4V7M7 7l.8 12.1a1.9 1.9 0 0 0 1.9 1.8h4.6a1.9 1.9 0 0 0 1.9-1.8L17 7M10 10.7v6.6M14 10.7v6.6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-zoom-in" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15.6 15.6 4.4 4.4M10.8 8v5.6M8 10.8h5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-zoom-out" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m15.6 15.6 4.4 4.4M8 10.8h5.6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-fit" viewBox="0 0 24 24"><path d="M9 4H4v5M15 4h5v5M9 20H4v-5M15 20h5v-5M4 9l5-5M20 9l-5-5M4 15l5 5M20 15l-5 5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-left" viewBox="0 0 24 24"><path d="m14.5 5.5-6.5 6.5 6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9.5 5.5 6.5 6.5-6.5 6.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m5.5 9.5 6.5 6.5 6.5-6.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 8.4a3.6 3.6 0 1 1 0 7.2 3.6 3.6 0 0 1 0-7.2Z" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m10.2 3.4-.5 2a8.3 8.3 0 0 0-1.8 1L6 5.8 4.2 9l1.4 1.5a8.5 8.5 0 0 0 0 2.1L4.2 15l1.8 3.2 1.9-.6c.5.4 1.1.7 1.8 1l.5 2h3.6l.5-2a8.3 8.3 0 0 0 1.8-1l1.9.6 1.8-3.2-1.4-1.5a8.5 8.5 0 0 0 0-2.1L19.8 9 18 5.8l-1.9.6a8.3 8.3 0 0 0-1.8-1l-.5-2h-3.6Z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3.2 5 6.1v5.2c0 4.4 2.8 7.7 7 9.5 4.2-1.8 7-5.1 7-9.5V6.1L12 3.2Z" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m9.2 11.8 2 2 3.8-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.5c.6 4.7 2.8 6.9 7.5 7.5-4.7.6-6.9 2.8-7.5 7.5-.6-4.7-2.8-6.9-7.5-7.5 4.7-.6 6.9-2.8 7.5-7.5Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M3 12h2l2-6 3 12 3-16 3 14 2-4h3" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.2 4.2L19 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  </svg>
+
+  <div class="app">
+    <section class="player-card mode-empty" id="playerCard">
+      <div class="stage" id="stage">
+        <div class="stage-grid" aria-hidden="true"></div>
+
+        <header class="stage-brand">
+          <span class="brand-mark" aria-hidden="true">D</span>
+          <span class="brand-text">
+            <span class="brand-name">DePLay<span class="brand-dot">.</span></span>
+            <span class="brand-sub">локальный медиаплеер</span>
+          </span>
+        </header>
+
+        <div class="empty-state" id="emptyState">
+          <div class="empty-mark" aria-hidden="true">
+            <span class="empty-mark-line"></span>
+            <span class="empty-mark-letter">D</span>
+            <span class="empty-mark-code">PLAY / 01</span>
+          </div>
+          <h2>Перетащите видео или фото</h2>
+          <p>Полноэкранный просмотр с плавным зумом, покадровой перемоткой, встроенными звуковыми дорожками и живым миксом.</p>
+          <div class="empty-dock">
+            <button class="btn btn-primary btn-lg" id="emptyOpen" type="button">
+              <svg class="ico"><use href="#i-upload"></use></svg>
+              <span>Выбрать файл</span>
+            </button>
+            <button class="btn btn-line" id="settingsBtnEmpty" type="button">
+              <svg class="ico"><use href="#i-settings"></use></svg>
+              <span>Настройки</span>
+            </button>
+          </div>
+          <div class="format-chips" aria-label="Поддерживаемые форматы">
+            <span>MP4</span><span>WEBM</span><span>MOV</span><span>MKV</span><span>JPG</span><span>PNG</span><span>GIF</span><span>WEBP</span>
+          </div>
+          <div class="drop-hint">или перетащите файлы в окно <kbd>O</kbd></div>
+        </div>
+
+        <video id="video" preload="metadata" playsinline crossorigin="anonymous" hidden></video>
+
+        <div class="image-viewport" id="imageViewport" hidden>
+          <div class="image-ambient" id="imageAmbient" aria-hidden="true"></div>
+          <img id="imageEl" alt="" draggable="false">
+          <div class="image-hud" id="imageHud">
+            <span class="hud-index">IMG</span>
+            <span class="hud-text"><strong id="imageName">—</strong><small id="imageDims">—</small></span>
+          </div>
+          <div class="zoom-badge" id="zoomBadge">100%</div>
+        </div>
+
+        <div class="loading" id="loading" hidden>
+          <span class="spinner"></span>
+          <span class="loading-text">Загрузка…</span>
+        </div>
+
+        <button class="center-play" id="centerPlay" type="button" tabindex="-1" aria-hidden="true">
+          <svg class="ico ico-play"><use href="#i-play"></use></svg>
+          <span class="center-play-ring"></span>
+        </button>
+
+        <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+        <div class="controls video-controls" id="videoControls">
+          <div class="timeline" id="timeline" role="slider" tabindex="0" aria-label="Перемотка видео" aria-valuemin="0" aria-valuenow="0">
+            <div class="timeline-track">
+              <div class="buffered" id="buffered"></div>
+              <div class="progress" id="progress"></div>
+              <div class="hover-line" id="hoverLine"></div>
+              <div class="timeline-thumb" id="timelineThumb"></div>
+            </div>
+            <div class="preview" id="previewCard">
+              <canvas id="previewCanvas" width="368" height="207"></canvas>
+              <span class="preview-time" id="previewTime">0:00</span>
+            </div>
+          </div>
+
+          <div class="controls-row">
+            <div class="controls-left">
+              <div class="speed-wrap">
+                <button class="ctrl rate-btn" id="speedBtn" type="button" title="Скорость воспроизведения ( [ / ] )" aria-haspopup="true" aria-expanded="false">
+                  <span id="speedLabel">1×</span>
+                </button>
+                <div class="popover speed-popover" id="speedPopover">
+                  <div class="popover-head"><span>Скорость</span><strong id="speedValue">1×</strong></div>
+                  <input class="accent-range speed-range" id="speedRange" type="range" min="10" max="300" step="5" value="100" aria-label="Скорость воспроизведения">
+                  <div class="speed-chips" id="speedChips">
+                    <button type="button" data-rate="0.25">0.25×</button>
+                    <button type="button" data-rate="0.5">0.5×</button>
+                    <button type="button" data-rate="1">1×</button>
+                    <button type="button" data-rate="1.5">1.5×</button>
+                    <button type="button" data-rate="2">2×</button>
+                  </div>
+                  <p class="popover-hint">До 0.1× — плавное замедление с сохранением высоты тона.</p>
+                </div>
+              </div>
+              <button class="ctrl skip-btn" id="back2" type="button" title="Назад на 2 секунды (←)">−2с</button>
+              <button class="ctrl frame-btn" id="prevFrame" type="button" title="Предыдущий кадр (,)" aria-label="Предыдущий кадр">
+                <svg class="ico"><use href="#i-frame-prev"></use></svg>
+              </button>
+              <button class="play-btn" id="playBtn" type="button" title="Играть / пауза (Space)" aria-label="Играть">
+                <svg class="ico ico-play"><use href="#i-play"></use></svg>
+                <svg class="ico ico-pause"><use href="#i-pause"></use></svg>
+              </button>
+              <button class="ctrl frame-btn" id="nextFrame" type="button" title="Следующий кадр (.)" aria-label="Следующий кадр">
+                <svg class="ico"><use href="#i-frame-next"></use></svg>
+              </button>
+              <button class="ctrl skip-btn" id="fwd2" type="button" title="Вперёд на 2 секунды (→)">+2с</button>
+              <div class="volume-wrap">
+                <button class="ctrl" id="muteBtn" type="button" title="Без звука (M)" aria-label="Без звука">
+                  <svg class="ico vol-high"><use href="#i-volume-high"></use></svg>
+                  <svg class="ico vol-low"><use href="#i-volume-low"></use></svg>
+                  <svg class="ico vol-mute"><use href="#i-volume-mute"></use></svg>
+                </button>
+                <input class="vol-range" id="masterVolume" type="range" min="0" max="100" value="90" aria-label="Общая громкость">
+              </div>
+            </div>
+            <div class="controls-right">
+              <div class="time-display"><span id="currentTime">0:00</span><span class="time-sep">/</span><span id="duration">0:00</span></div>
+              <span class="fps-pill" id="fpsPill" title="Частота кадров: шаг покадровой перемотки">30 fps</span>
+              <button class="ctrl toggle-btn" id="loopBtn" type="button" title="Повтор (L)" aria-label="Повтор" aria-pressed="false">
+                <svg class="ico"><use href="#i-loop"></use></svg>
+              </button>
+              <button class="ctrl" id="pipBtn" type="button" title="Картинка в картинке (P)" aria-label="Картинка в картинке">
+                <svg class="ico"><use href="#i-pip"></use></svg>
+              </button>
+              <button class="ctrl" id="fullscreenBtn" type="button" title="Полный экран (F)" aria-label="Полный экран">
+                <svg class="ico fs-enter"><use href="#i-fullscreen"></use></svg>
+                <svg class="ico fs-exit"><use href="#i-fullscreen-exit"></use></svg>
+              </button>
+              <span class="ctrl-sep" aria-hidden="true"></span>
+              <button class="ctrl" id="tracksBtn" type="button" title="Звуковые дорожки (T)" aria-label="Звуковые дорожки" aria-expanded="false">
+                <svg class="ico"><use href="#i-wave"></use></svg>
+                <span class="track-count-badge" id="tracksBadge" hidden>0</span>
+              </button>
+              <button class="ctrl wide-ctrl is-accent" id="settingsBtn" type="button" title="Настройки (S)" aria-label="Настройки" aria-expanded="false">
+                <svg class="ico"><use href="#i-settings"></use></svg>
+                <span class="btn-label">Настройки</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div class="controls image-controls" id="imageControls">
+          <div class="gallery-strip" id="galleryStrip" aria-label="Изображения"></div>
+          <div class="zoom-row">
+            <div class="zoom-group">
+              <button class="ctrl" id="zoomOut" type="button" title="Уменьшить (−)" aria-label="Уменьшить">
+                <svg class="ico"><use href="#i-zoom-out"></use></svg>
+              </button>
+              <input class="zoom-range accent-range" id="zoomRange" type="range" min="100" max="800" step="1" value="100" aria-label="Масштаб изображения">
+              <button class="ctrl" id="zoomIn" type="button" title="Увеличить (+)" aria-label="Увеличить">
+                <svg class="ico"><use href="#i-zoom-in"></use></svg>
+              </button>
+              <span class="zoom-value" id="zoomValue">100%</span>
+            </div>
+            <div class="zoom-actions">
+              <button class="pill-btn" id="fitBtn" type="button" title="Вписать в экран (0)">
+                <svg class="ico"><use href="#i-fit"></use></svg><span>По размеру</span>
+              </button>
+              <button class="pill-btn" id="actualBtn" type="button" title="Реальный масштаб 1:1">1:1</button>
+              <div class="gallery-nav" id="galleryNav" hidden>
+                <button class="ctrl" id="prevImage" type="button" title="Предыдущее изображение (←)" aria-label="Предыдущее изображение">
+                  <svg class="ico"><use href="#i-chevron-left"></use></svg>
+                </button>
+                <span id="imageCounter">1 / 1</span>
+                <button class="ctrl" id="nextImage" type="button" title="Следующее изображение (→)" aria-label="Следующее изображение">
+                  <svg class="ico"><use href="#i-chevron-right"></use></svg>
+                </button>
+              </div>
+              <span class="ctrl-sep" aria-hidden="true"></span>
+              <button class="ctrl wide-ctrl is-accent" id="settingsBtnImage" type="button" title="Настройки (S)" aria-label="Настройки" aria-expanded="false">
+                <svg class="ico"><use href="#i-settings"></use></svg>
+                <span class="btn-label">Настройки</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="settings-backdrop" id="settingsBackdrop" aria-hidden="true"></div>
+
+  <aside class="settings-sheet" id="settingsSheet" aria-hidden="true" aria-labelledby="settingsTitle" inert>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <span class="sheet-accent" aria-hidden="true"></span>
+      <header class="sheet-head">
+        <div class="sheet-title">
+          <span class="sheet-kicker">DePLay / панель</span>
+          <h2 id="settingsTitle">Настройки</h2>
+        </div>
+        <div class="sheet-head-actions">
+          <span class="status-chip idle" id="mediaStatus"><i></i> ожидание</span>
+          <span class="status-chip subtle" id="settingsMode">—</span>
+          <button class="btn btn-line" id="openMediaSheet" type="button">
+            <svg class="ico"><use href="#i-upload"></use></svg>
+            <span class="btn-label">Открыть файл</span>
+          </button>
+          <button class="icon-btn" id="settingsClose" type="button" aria-label="Закрыть настройки">
+            <svg class="ico"><use href="#i-close"></use></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="sheet-scroll">
+        <div class="sheet-columns">
+          <div class="sheet-column">
+            <section class="sheet-section media-card" aria-labelledby="mediaTitle">
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow" id="mediaTitle">Медиа</span>
+                  <h3>Текущий файл</h3>
+                </div>
+              </div>
+
+              <div class="side-empty" id="sideEmpty">
+                <span class="side-empty-mark"><svg class="ico"><use href="#i-sparkle"></use></svg></span>
+                <strong>Пока пусто</strong>
+                <p>Откройте видео или изображение, чтобы увидеть параметры файла и звуковые дорожки.</p>
+              </div>
+
+              <div class="media-summary" id="mediaSummary" hidden>
+                <div class="media-icon" id="mediaIcon"><svg class="ico"><use href="#i-film"></use></svg></div>
+                <div class="media-titles">
+                  <strong id="mediaName">—</strong>
+                  <span id="mediaSub">—</span>
+                </div>
+              </div>
+
+              <dl class="media-facts" id="mediaFacts" hidden>
+                <div><dt>Разрешение</dt><dd id="factRes">—</dd></div>
+                <div><dt id="factDurationLabel">Длительность</dt><dd id="factDuration">—</dd></div>
+                <div><dt>Размер</dt><dd id="factSize">—</dd></div>
+                <div><dt>Формат</dt><dd id="factFormat">—</dd></div>
+                <div><dt>Звук</dt><dd id="factAudio">—</dd></div>
+              </dl>
+            </section>
+
+            <section class="sheet-section" id="galleryBlock" hidden>
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow">Изображения</span>
+                  <h3>Галерея</h3>
+                </div>
+                <span class="block-count" id="galleryCount">0 файлов</span>
+              </div>
+              <div class="gallery-grid" id="galleryGrid"></div>
+            </section>
+          </div>
+
+          <div class="sheet-column">
+            <section class="sheet-section">
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow">Воспроизведение</span>
+                  <h3>Параметры</h3>
+                </div>
+              </div>
+
+              <div class="image-tips" id="imageTips" hidden>
+                <div class="image-tips-head"><svg class="ico"><use href="#i-sparkle"></use></svg> Режим изображения</div>
+                <p>Колесо мыши — масштаб, двойной клик — быстрое приближение, перетаскивание — панорама, <kbd>0</kbd> — сброс.</p>
+              </div>
+
+              <div class="setting-row" id="languageSetting">
+                <label for="languageSelect">
+                  <span>Язык интерфейса</span>
+                  <small>применяется сразу</small>
+                </label>
+                <select id="languageSelect" aria-label="Язык интерфейса">
+                  <option value="ru">Русский</option>
+                  <option value="en">English</option>
+                  <option value="de">Deutsch</option>
+                </select>
+              </div>
+
+              <div class="setting-row" id="fpsSetting">
+                <label for="fpsSelect">
+                  <span>Частота кадров</span>
+                  <small>шаг покадровой перемотки</small>
+                </label>
+                <select id="fpsSelect" disabled>
+                  <option value="auto">Авто</option>
+                  <option value="23.976">23.976</option>
+                  <option value="24">24</option>
+                  <option value="25">25</option>
+                  <option value="29.97">29.97</option>
+                  <option value="30">30</option>
+                  <option value="48">48</option>
+                  <option value="50">50</option>
+                  <option value="59.94">59.94</option>
+                  <option value="60">60</option>
+                  <option value="120">120</option>
+                </select>
+              </div>
+
+              <div class="setting-row" id="loopSetting">
+                <label>
+                  <span>Зациклить видео</span>
+                  <small>повторять бесконечно</small>
+                </label>
+                <button class="switch" id="loopSwitch" type="button" role="switch" aria-checked="false" aria-label="Зациклить видео" disabled>
+                  <span></span>
+                </button>
+              </div>
+
+              <div class="privacy-note">
+                <svg class="ico"><use href="#i-shield"></use></svg>
+                <span>Файлы остаются на устройстве. Ничего не загружается в сеть.</span>
+              </div>
+            </section>
+
+            <section class="sheet-section">
+              <div class="section-head">
+                <div>
+                  <span class="eyebrow">Управление</span>
+                  <h3>Горячие клавиши</h3>
+                </div>
+                <span class="block-count">KEYMAP</span>
+              </div>
+              <details class="shortcuts" open>
+                <summary>
+                  <span>Все комбинации</span>
+                  <svg class="ico"><use href="#i-chevron-down"></use></svg>
+                </summary>
+                <div class="shortcut-list">
+                  <div><span>Играть / пауза</span><kbd>Space</kbd><kbd>K</kbd></div>
+                  <div><span>± 2 секунды</span><kbd>←</kbd><kbd>→</kbd></div>
+                  <div><span>Покадрово</span><kbd>,</kbd><kbd>.</kbd></div>
+                  <div><span>Скорость</span><kbd>[</kbd><kbd>]</kbd></div>
+                  <div><span>Громкость</span><kbd>↑</kbd><kbd>↓</kbd></div>
+                  <div><span>Без звука</span><kbd>M</kbd></div>
+                  <div><span>Полный экран</span><kbd>F</kbd></div>
+                  <div><span>Настройки</span><kbd>S</kbd></div>
+                  <div><span>Звуковые дорожки</span><kbd>T</kbd></div>
+                  <div><span>Открыть файл</span><kbd>O</kbd></div>
+                  <div><span>Добавить звук</span><kbd>A</kbd></div>
+                  <div><span>Зум / сброс</span><kbd>+</kbd><kbd>−</kbd><kbd>0</kbd></div>
+                  <div><span>Закрыть панель</span><kbd>Esc</kbd></div>
+                </div>
+              </details>
+            </section>
+          </div>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <div class="settings-backdrop" id="tracksBackdrop" aria-hidden="true"></div>
+
+  <aside class="settings-sheet tracks-sheet" id="tracksSheet" aria-hidden="true" aria-labelledby="tracksTitle" inert>
+    <div class="sheet-panel" role="dialog" aria-modal="true" aria-labelledby="tracksTitle">
+      <span class="sheet-accent" aria-hidden="true"></span>
+      <header class="sheet-head">
+        <div class="sheet-title">
+          <span class="sheet-kicker">DePLay / звук</span>
+          <h2 id="tracksTitle">Звуковые дорожки</h2>
+        </div>
+        <div class="sheet-head-actions">
+          <button class="btn btn-line" id="addAudioTop" type="button" disabled>
+            <svg class="ico"><use href="#i-music"></use></svg>
+            <span class="btn-label">Добавить звук</span>
+          </button>
+          <button class="icon-btn" id="tracksClose" type="button" aria-label="Закрыть дорожки">
+            <svg class="ico"><use href="#i-close"></use></svg>
+          </button>
+        </div>
+      </header>
+
+      <div class="sheet-scroll tracks-scroll">
+        <section class="tracks-panel" id="tracksBlock" hidden>
+          <div class="tracks-head">
+            <div class="tracks-head-text">
+              <span class="eyebrow">Аудио</span>
+              <h3 id="tracksFileName">—</h3>
+            </div>
+            <div class="section-actions">
+              <span class="block-count" id="tracksCount">0</span>
+              <button class="toggle-all-btn" id="toggleAllTracks" type="button" title="Включить все звуковые дорожки" aria-label="Включить все звуковые дорожки" disabled>
+                <svg class="ico" id="toggleAllTracksIcon"><use href="#i-check"></use></svg>
+                <span id="toggleAllTracksLabel">Включить все</span>
+              </button>
+              <button class="mini-btn" id="addAudioBtn" type="button" title="Добавить звуковые файлы (A)" aria-label="Добавить звуковые файлы">
+                <svg class="ico"><use href="#i-plus"></use></svg>
+              </button>
+            </div>
+          </div>
+          <div class="tracks-list" id="tracksList"></div>
+          <p class="side-hint">
+            <svg class="ico"><use href="#i-wave"></use></svg>
+            <span>Встроенные дорожки извлекаются из контейнера на этом устройстве. Можно включить несколько — они смешаются и будут синхронизированы с видео.</span>
+          </p>
+        </section>
+      </div>
+    </div>
+  </aside>
+
+  <div class="drop-veil" id="dropVeil" aria-hidden="true">
+    <div class="drop-veil-inner">
+      <div class="drop-veil-icon"><svg class="ico"><use href="#i-upload"></use></svg></div>
+      <strong>Отпустите файлы</strong>
+      <span>видео, изображения или звуковые дорожки</span>
+    </div>
+  </div>
+
+  <input type="file" id="mediaInput" accept="video/*,image/*" multiple hidden>
+  <input type="file" id="audioInput" accept="audio/*" multiple hidden>
+  <script src="vendor/mp4box.all.min.js" defer></script>
+  <script src="i18n.js" defer></script>
+  <script src="app.js" defer></script>
+</body>
+</html>
