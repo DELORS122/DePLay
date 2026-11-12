@@ -103,10 +103,25 @@
     fpsSelect: $('fpsSelect'),
     loopSetting: $('loopSetting'),
     loopSwitch: $('loopSwitch'),
-    streamlinkSetting: $('streamlinkSetting'),
+    streamControls: $('streamControls'),
+    streamLiveBadge: $('streamLiveBadge'),
+    streamTitle: $('streamTitle'),
+    streamUptime: $('streamUptime'),
+    streamLatency: $('streamLatency'),
+    catchUpBtn: $('catchUpBtn'),
+    streamSpeedBtn: $('streamSpeedBtn'),
+    streamSpeedLabel: $('streamSpeedLabel'),
+    streamSpeedPopover: $('streamSpeedPopover'),
+    streamSpeedValue: $('streamSpeedValue'),
+    streamSpeedRange: $('streamSpeedRange'),
+    streamSpeedChips: $('streamSpeedChips'),
+    streamPlayBtn: $('streamPlayBtn'),
+    streamMuteBtn: $('streamMuteBtn'),
+    streamVolume: $('streamVolume'),
     streamQualitySelect: $('streamQualitySelect'),
-    streamlinkPath: $('streamlinkPath'),
-    streamlinkStatus: $('streamlinkStatus'),
+    streamFullscreenBtn: $('streamFullscreenBtn'),
+    settingsBtnStream: $('settingsBtnStream'),
+    resetSettingsBtn: $('resetSettingsBtn'),
     addAudioTop: $('addAudioTop'),
     openMediaSheet: $('openMediaSheet'),
     emptyOpen: $('emptyOpen'),
@@ -127,13 +142,18 @@
     videoUrl: null,
     videoReady: false,
     videoIsStream: false,
+    live: false,
+    streamSource: null,
+    streamPage: '',
+    streamUptimeBase: 0,
+    streamUptimeStamp: 0,
+    streamUptimeKnown: false,
+    streamUptimeTimer: null,
+    streamLatency: 0,
     audioOnly: false,
     audioFallbackBusy: false,
     hls: null,
     streamQuality: 'best',
-    streamlinkPath: '',
-    streamlinkDetected: '',
-    streamlinkReady: false,
     originalEnabled: true,
     originalAutoMuted: false,
     audioTracks: [],
@@ -178,6 +198,8 @@
     tracksTrigger: null,
     chromeHover: false,
   };
+
+  const isVideoMode = () => state.mode === 'video' || state.mode === 'stream';
 
   const previewVideo = document.createElement('video');
   previewVideo.muted = true;
@@ -374,21 +396,18 @@
     };
   }
 
-  function languageTitle(track, index) {
-    const customName = String(track.customName || '').trim();
-    const genericName = /^(sound|video|subtitle|metadata|media)?\s*handler$/i.test(customName)
-      || /handler$/i.test(customName)
-      || customName.toLowerCase() === 'soundhandler';
-    if (customName && !genericName) return customName;
-
-    const name = String(track.name || '').trim();
-    const genericHandler = /^(sound|video|subtitle|metadata|media)?\s*handler$/i.test(name)
-      || /handler$/i.test(name)
-      || name.toLowerCase() === 'soundhandler';
-    if (name && !genericHandler) return name;
-    const code = String(track.language || '').toLowerCase();
-    if (code && code !== 'und' && LANG_NAMES[code]) return t('track.title.language', { language: LANG_NAMES[code] });
-    return t('track.title.default', { n: index + 1 });
+  function trackTitle(track, index) {
+    const candidates = [track.containerTitle, track.customName, track.name];
+    for (const value of candidates) {
+      const text = String(value || '').trim();
+      if (!text) continue;
+      if (/^(sound|video|subtitle|metadata|media)?\s*handler$/i.test(text)) continue;
+      if (/handler$/i.test(text)) continue;
+      if (text.toLowerCase() === 'soundhandler') continue;
+      if (/^(track|audio)\s*\d+$/i.test(text)) continue;
+      return text;
+    }
+    return t('track.title.line', { n: index + 1 });
   }
 
   function channelText(channels) {
@@ -427,7 +446,13 @@
     const status = mode === 'empty' ? t('status.idle') : t('status.onDevice');
     dom.mediaStatus.innerHTML = `<i></i> ${status}`;
     dom.mediaStatus.classList.toggle('live', mode !== 'empty');
-    dom.settingsMode.textContent = mode === 'video' ? t('mode.video') : mode === 'image' ? t('mode.image') : '—';
+    dom.settingsMode.textContent = mode === 'video'
+      ? t('mode.video')
+      : mode === 'stream'
+        ? t('mode.stream')
+        : mode === 'image'
+          ? t('mode.image')
+          : '—';
     dom.settingsMode.hidden = mode === 'empty';
     dom.imageTips.hidden = mode !== 'image';
     dom.fpsSetting.hidden = mode !== 'video';
@@ -462,9 +487,13 @@
     const count = state.embeddedTracks.length;
     const countLabel = count ? `${count} ${unit('track', count)}` : '';
     const sizeLabel = file.stream ? t('media.stream') : fmtBytes(file.size);
-    const modeLabel = state.audioOnly ? t('media.audioOnly') : (res === '—' ? t('media.video') : res);
+    const modeLabel = state.mode === 'stream'
+      ? t('media.stream')
+      : state.audioOnly
+        ? t('media.audioOnly')
+        : (res === '—' ? t('media.video') : res);
     dom.factDurationLabel.textContent = t('facts.duration');
-    dom.mediaIcon.innerHTML = iconMarkup('i-film');
+    dom.mediaIcon.innerHTML = iconMarkup(state.mode === 'stream' ? 'i-live' : 'i-film');
     dom.mediaName.textContent = file.name;
     dom.mediaName.title = file.name;
     dom.mediaSub.textContent = `${modeLabel} · ${sizeLabel}${countLabel ? ` · ${countLabel}` : ''}`;
@@ -499,30 +528,32 @@
   }
 
   function refreshInfo() {
-    if (state.mode === 'video') updateVideoInfo();
+    if (isVideoMode()) updateVideoInfo();
     else if (state.mode === 'image') updateImageInfo();
+    if (state.mode === 'stream') updateStreamInfo();
   }
 
   function setMode(mode) {
     state.mode = mode;
-    dom.playerCard.classList.remove('mode-empty', 'mode-video', 'mode-image');
+    dom.playerCard.classList.remove('mode-empty', 'mode-video', 'mode-image', 'mode-stream');
     dom.playerCard.classList.add(`mode-${mode}`);
-    dom.video.hidden = mode !== 'video';
+    const videoLike = mode === 'video' || mode === 'stream';
+    dom.video.hidden = !videoLike;
     dom.imageViewport.hidden = mode !== 'image';
-    if (mode !== 'video') dom.playerCard.classList.remove('ui-idle', 'is-playing', 'is-paused', 'video-ready');
+    if (!videoLike) dom.playerCard.classList.remove('ui-idle', 'is-playing', 'is-paused', 'video-ready');
     if (mode !== 'image') dom.playerCard.classList.remove('is-zoomed');
-    if (mode !== 'video') document.body.classList.remove('is-playing');
+    if (!videoLike) document.body.classList.remove('is-playing');
     clearTimeout(state.idleTimer);
     state.idleTimer = null;
     syncSidebar();
     refreshInfo();
     updatePlaybackState();
-    if (mode === 'image') showChrome();
+    if (mode === 'image' || mode === 'stream') showChrome();
   }
 
   // ── Playback chrome ───────────────────────────────────────
   function updatePlaybackState() {
-    if (state.mode !== 'video') {
+    if (!isVideoMode()) {
       dom.playerCard.classList.remove('is-playing', 'is-paused', 'video-ready');
       document.body.classList.remove('is-playing');
       return;
@@ -533,8 +564,13 @@
     dom.playerCard.classList.toggle('is-playing', playing);
     dom.playerCard.classList.toggle('is-paused', !playing);
     document.body.classList.toggle('is-playing', playing);
-    dom.playBtn.setAttribute('aria-label', playing ? t('aria.pause') : t('aria.play'));
-    dom.playBtn.title = playing ? t('play.title.pause') : t('play.title.play');
+    const label = playing ? t('aria.pause') : t('aria.play');
+    const title = playing ? t('play.title.pause') : t('play.title.play');
+    [dom.playBtn, dom.streamPlayBtn].forEach((button) => {
+      if (!button) return;
+      button.setAttribute('aria-label', label);
+      button.title = title;
+    });
     if (!playing) {
       clearTimeout(state.idleTimer);
       state.idleTimer = null;
@@ -547,7 +583,8 @@
   function canAutoHide() {
     if (state.settingsOpen || state.tracksOpen || state.scrubbing || state.chromeHover) return false;
     if (dom.speedPopover.classList.contains('open')) return false;
-    if (state.mode === 'video') return state.videoReady && !dom.video.paused && !dom.video.ended;
+    if (dom.streamSpeedPopover && dom.streamSpeedPopover.classList.contains('open')) return false;
+    if (isVideoMode()) return state.videoReady && !dom.video.paused && !dom.video.ended;
     if (state.mode === 'image') return state.pointers.size === 0;
     return false;
   }
@@ -571,8 +608,12 @@
   }
 
   // ── Transport ──────────────────────────────────────────────
+  function maxPlaybackRate() {
+    return state.mode === 'stream' ? 1 : 3;
+  }
+
   function togglePlayback() {
-    if (state.mode !== 'video' || !state.videoReady) return;
+    if (!isVideoMode() || !state.videoReady) return;
     if (dom.video.paused || dom.video.ended) {
       dom.video.play().catch(() => toast(t('toast.playFailed')));
     } else {
@@ -581,15 +622,33 @@
   }
 
   function seekTo(time) {
-    if (state.mode !== 'video' || !state.videoReady) return;
+    if (!isVideoMode() || !state.videoReady) return;
+    if (state.mode === 'stream' && state.live) {
+      let min = 0;
+      let max = Number.isFinite(dom.video.duration) ? dom.video.duration : 0;
+      try {
+        const ranges = dom.video.seekable;
+        if (ranges && ranges.length) {
+          min = ranges.start(0);
+          max = ranges.end(ranges.length - 1);
+        }
+      } catch { /* keep the fallback window */ }
+      if (max <= min) return;
+      const target = clamp(time, min, Math.max(min, max - 0.5));
+      try { dom.video.currentTime = target; } catch { /* ignore */ }
+      updateStreamLatency();
+      updateTimeline();
+      return;
+    }
     const duration = Number.isFinite(dom.video.duration) ? dom.video.duration : 0;
     const target = clamp(time, 0, Math.max(0, duration - 0.01));
     try { dom.video.currentTime = target; } catch { /* ignore */ }
     updateTimeline();
+    updateStreamLatency();
   }
 
   function seekBy(delta) {
-    if (state.mode !== 'video' || !state.videoReady) return;
+    if (!isVideoMode() || !state.videoReady) return;
     seekTo((dom.video.currentTime || 0) + delta);
     showChrome();
   }
@@ -631,7 +690,7 @@
   }
 
   function setRate(value, notify = false) {
-    const rate = clamp(round2(value), 0.1, 3);
+    const rate = clamp(round2(value), 0.1, maxPlaybackRate());
     state.rate = rate;
     if (dom.video) dom.video.playbackRate = rate;
     allAudioTracks().forEach((track) => { if (track.el) track.el.playbackRate = rate; });
@@ -643,6 +702,16 @@
     dom.speedChips.querySelectorAll('button').forEach((button) => {
       button.classList.toggle('is-active', Math.abs(parseFloat(button.dataset.rate) - rate) < 0.001);
     });
+    if (dom.streamSpeedLabel) {
+      dom.streamSpeedLabel.textContent = fmtRate(rate);
+      dom.streamSpeedValue.textContent = fmtRate(rate);
+      dom.streamSpeedRange.value = String(Math.round(rate * 100));
+      paintRange(dom.streamSpeedRange, ((rate - 0.1) / 0.9) * 100);
+      dom.streamSpeedBtn.classList.toggle('is-active', Math.abs(rate - 1) > 0.001);
+      dom.streamSpeedChips.querySelectorAll('button').forEach((button) => {
+        button.classList.toggle('is-active', Math.abs(parseFloat(button.dataset.rate) - rate) < 0.001);
+      });
+    }
     if (notify) toast(t('toast.speed', { rate: fmtRate(rate) }));
     scheduleSettingsPersist();
   }
@@ -650,8 +719,9 @@
   function adjustRate(dir) {
     const steps = [0.1, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2, 2.5, 3];
     const current = state.rate;
+    const ceiling = maxPlaybackRate();
     let next = current;
-    if (dir > 0) next = steps.find((value) => value > current + 0.001) ?? 3;
+    if (dir > 0) next = steps.find((value) => value > current + 0.001 && value <= ceiling + 0.001) ?? ceiling;
     else next = [...steps].reverse().find((value) => value < current - 0.001) ?? 0.1;
     setRate(next, true);
   }
@@ -679,6 +749,12 @@
     const level = state.muted || master === 0 ? 'mute' : master < 0.45 ? 'low' : 'high';
     dom.muteBtn.dataset.level = level;
     dom.muteBtn.setAttribute('aria-label', level === 'mute' ? t('aria.muteOn') : t('aria.muteOff'));
+    if (dom.streamVolume) {
+      dom.streamVolume.value = String(Math.round(master * 100));
+      paintRange(dom.streamVolume, master * 100);
+      dom.streamMuteBtn.dataset.level = level;
+      dom.streamMuteBtn.setAttribute('aria-label', level === 'mute' ? t('aria.muteOn') : t('aria.muteOff'));
+    }
     if (master > 0) state.lastNonZeroVolume = master;
     updateTrackVolumeVisuals();
   }
@@ -697,7 +773,7 @@
 
   function setLoop(on, notify = false) {
     state.loop = Boolean(on);
-    dom.video.loop = state.loop;
+    dom.video.loop = state.loop && state.mode !== 'stream';
     dom.loopBtn.classList.toggle('is-active', state.loop);
     dom.loopBtn.setAttribute('aria-pressed', String(state.loop));
     dom.loopSwitch.setAttribute('aria-checked', String(state.loop));
@@ -728,12 +804,173 @@
     dom.buffered.style.transform = `scaleX(${duration > 0 ? clamp(end / duration, 0, 1) : 0})`;
   }
 
+  // ── Live stream helpers ───────────────────────────────────
+  function fmtUptime(seconds) {
+    const total = Math.max(0, Math.floor(Number(seconds) || 0));
+    const days = Math.floor(total / 86400);
+    const rest = total % 86400;
+    const h = Math.floor(rest / 3600);
+    const m = Math.floor((rest % 3600) / 60);
+    const s = rest % 60;
+    if (days > 0) return `${days}d ${h}:${pad2(m)}:${pad2(s)}`;
+    return `${h}:${pad2(m)}:${pad2(s)}`;
+  }
+
+  function streamUptimeSeconds() {
+    if (!state.live) return 0;
+    if (!state.streamUptimeStamp) state.streamUptimeStamp = performance.now();
+    return state.streamUptimeBase + (performance.now() - state.streamUptimeStamp) / 1000;
+  }
+
+  function updateStreamInfo() {
+    if (!dom.streamTitle) return;
+    const name = state.videoFile ? state.videoFile.name : t('media.stream');
+    dom.streamTitle.textContent = name;
+    dom.streamTitle.title = name;
+    dom.streamLiveBadge.hidden = !state.live;
+    dom.streamUptime.textContent = fmtUptime(streamUptimeSeconds());
+    dom.streamLatency.textContent = `${Math.max(0, state.streamLatency).toFixed(1)} ${t('stream.seconds')}`;
+    dom.catchUpBtn.disabled = !state.live;
+    if (dom.streamQualitySelect) {
+      dom.streamQualitySelect.value = STREAM_QUALITIES.has(state.streamQuality) ? state.streamQuality : 'best';
+    }
+  }
+
+  function updateStreamLatency() {
+    if (state.mode !== 'stream' || !state.live) return;
+    let latency = 0;
+    if (state.hls && Number.isFinite(state.hls.latency)) {
+      latency = state.hls.latency;
+    } else {
+      try {
+        const ranges = dom.video.seekable;
+        if (ranges && ranges.length) {
+          latency = Math.max(0, ranges.end(ranges.length - 1) - (dom.video.currentTime || 0));
+        }
+      } catch { /* ignore */ }
+    }
+    state.streamLatency = latency;
+    if (dom.streamLatency) {
+      dom.streamLatency.textContent = `${latency.toFixed(1)} ${t('stream.seconds')}`;
+    }
+  }
+
+  function catchUpLive() {
+    if (!state.live) return;
+    let target = null;
+    if (state.hls && Number.isFinite(state.hls.liveSyncPosition)) {
+      target = state.hls.liveSyncPosition;
+    } else {
+      try {
+        const ranges = dom.video.seekable;
+        if (ranges && ranges.length) target = ranges.end(ranges.length - 1) - 0.5;
+      } catch { /* ignore */ }
+    }
+    if (Number.isFinite(target) && target > 0) {
+      try { dom.video.currentTime = target; } catch { /* ignore */ }
+    }
+    if (dom.video.paused) dom.video.play().catch(() => { /* autoplay may be blocked */ });
+    updateStreamLatency();
+    showChrome();
+  }
+
+  function stopStreamUptime() {
+    if (state.streamUptimeTimer) {
+      clearInterval(state.streamUptimeTimer);
+      state.streamUptimeTimer = null;
+    }
+  }
+
+  async function loadStreamUptime() {
+    if (!state.live || !state.streamSource) return;
+    const source = state.streamSource;
+    try {
+      const response = await fetch(source, { cache: 'no-store' });
+      if (!response.ok || state.streamSource !== source) return;
+      let text = await response.text();
+      if (state.streamSource !== source) return;
+      // Streamlink may return a master playlist; uptime tags live in the media
+      // playlist. Follow the first variant once.
+      if (!/#EXT-X-TWITCH-TOTAL-SECS|#EXT-X-PROGRAM-DATE-TIME/i.test(text) &&
+          /#EXT-X-STREAM-INF/i.test(text)) {
+        const variant = text.split(/\r?\n/).find((line) => line.trim() && !line.trim().startsWith('#'));
+        if (variant) {
+          try {
+            const mediaUrl = new URL(variant.trim(), source).href;
+            const media = await fetch(mediaUrl, { cache: 'no-store' });
+            if (media.ok && state.streamSource === source) text = await media.text();
+          } catch { /* keep the master playlist */ }
+        }
+      }
+      if (state.streamSource !== source) return;
+      const total = /#EXT-X-TWITCH-TOTAL-SECS:([0-9.]+)/i.exec(text);
+      if (total) {
+        state.streamUptimeBase = Number(total[1]) || 0;
+        state.streamUptimeStamp = performance.now();
+        state.streamUptimeKnown = true;
+        updateStreamInfo();
+        return;
+      }
+      const program = /#EXT-X-PROGRAM-DATE-TIME:(.+)/i.exec(text);
+      if (program) {
+        const started = Date.parse(program[1].trim());
+        if (Number.isFinite(started)) {
+          state.streamUptimeBase = Math.max(0, (Date.now() - started) / 1000);
+          state.streamUptimeStamp = performance.now();
+          state.streamUptimeKnown = true;
+          updateStreamInfo();
+        }
+      }
+    } catch { /* CORS or offline: fall back to the session timer */ }
+  }
+
+  function startStreamUptime() {
+    stopStreamUptime();
+    if (!state.live) return;
+    if (!state.streamUptimeKnown) {
+      state.streamUptimeBase = 0;
+      state.streamUptimeStamp = performance.now();
+    }
+    state.streamUptimeTimer = setInterval(() => {
+      if (!state.live) return;
+      updateStreamInfo();
+      updateStreamLatency();
+    }, 1000);
+    loadStreamUptime();
+  }
+
+  function syncStreamUi() {
+    updateStreamInfo();
+    if (dom.streamVolume) {
+      const master = clamp(state.masterVolume, 0, 1);
+      dom.streamVolume.value = String(Math.round(master * 100));
+      paintRange(dom.streamVolume, master * 100);
+      const level = state.muted || master === 0 ? 'mute' : master < 0.45 ? 'low' : 'high';
+      dom.streamMuteBtn.dataset.level = level;
+    }
+    if (dom.streamQualitySelect) {
+      dom.streamQualitySelect.value = STREAM_QUALITIES.has(state.streamQuality) ? state.streamQuality : 'best';
+    }
+    setRate(state.rate);
+  }
+
+  function setStreamQuality(value) {
+    state.streamQuality = STREAM_QUALITIES.has(value) ? value : 'best';
+    scheduleSettingsPersist();
+    if (state.live && postToHost(`deplay:streamquality:${state.streamQuality}`)) {
+      toast(t('toast.streamQuality', { quality: state.streamQuality.toUpperCase() }), 2200);
+    } else {
+      toast(t('toast.streamQualityLocal'), 2600);
+    }
+  }
+
   function startTick() {
     if (state.tickHandle) return;
     const tick = () => {
       state.tickHandle = null;
-      if (state.mode !== 'video' || dom.video.paused) return;
+      if (!isVideoMode() || dom.video.paused) return;
       updateTimeline();
+      if (state.mode === 'stream') updateStreamLatency();
       const now = performance.now();
       if (now - state.lastAudioSync > 750) {
         state.lastAudioSync = now;
@@ -745,8 +982,6 @@
   }
 
   // ── Audio tracks ──────────────────────────────────────────
-  let originalRow = null;
-
   function clearAudioTracks() {
     state.analysisToken += 1;
     dom.tracksFileName.textContent = '—';
@@ -768,8 +1003,7 @@
     state.embeddedAnalyzing = false;
     state.embeddedChecked = false;
     state.originalEnabled = true;
-    originalRow = null;
-    if (state.mode === 'video') renderTracks();
+    if (isVideoMode()) renderTracks();
   }
 
   function updateTrackRowMeta(track) {
@@ -793,39 +1027,6 @@
       const sw = track.row.querySelector('.switch');
       if (sw) sw.setAttribute('aria-checked', String(track.enabled));
     });
-    if (originalRow) {
-      const sw = originalRow.querySelector('.switch');
-      if (sw) sw.setAttribute('aria-checked', String(state.originalEnabled));
-      originalRow.classList.toggle('is-on', state.originalEnabled);
-      originalRow.classList.toggle('is-off', !state.originalEnabled);
-    }
-  }
-
-  function buildOriginalRow() {
-    const row = document.createElement('div');
-    row.className = `track ${state.originalEnabled ? 'is-on' : 'is-off'}`;
-    row.innerHTML = `
-      <div class="track-top">
-        <span class="track-index">NAT</span>
-        <div class="eq" aria-hidden="true"><i></i><i></i><i></i></div>
-        <div class="track-text">
-          <div class="track-name">${t('track.nativeName')}</div>
-          <div class="track-meta">${t('track.nativeMeta')}</div>
-        </div>
-        <span class="track-badge">native</span>
-        <button class="switch" type="button" role="switch" aria-checked="${state.originalEnabled}" aria-label="${t('track.nativeName')}"><span></span></button>
-      </div>`;
-    const sw = row.querySelector('.switch');
-    sw.addEventListener('click', () => {
-      state.originalEnabled = !state.originalEnabled;
-      state.originalAutoMuted = false;
-      applyVolume();
-      updateTrackVolumeVisuals();
-      scheduleSettingsPersist();
-      showChrome();
-    });
-    originalRow = row;
-    return row;
   }
 
   function buildAudioRow(track) {
@@ -1039,11 +1240,10 @@
       return;
     }
     const frag = document.createDocumentFragment();
-    frag.append(buildOriginalRow());
     state.embeddedTracks.forEach((track) => frag.append(buildEmbeddedRow(track)));
     state.audioTracks.forEach((track) => frag.append(buildAudioRow(track)));
     dom.tracksList.replaceChildren(frag);
-    const count = state.embeddedTracks.length + state.audioTracks.length + 1;
+    const count = state.embeddedTracks.length + state.audioTracks.length;
     const countText = state.embeddedAnalyzing ? '…' : String(count);
     dom.tracksCount.textContent = countText;
     dom.tracksBadge.textContent = countText;
@@ -1170,6 +1370,67 @@
     return value.trim();
   }
 
+  async function readBoxBytes(box, file) {
+    if (!box) return null;
+    if (box.data) {
+      if (box.data instanceof Uint8Array) return box.data;
+      if (box.data.buffer instanceof ArrayBuffer) {
+        return new Uint8Array(box.data.buffer, box.data.byteOffset || 0, box.data.byteLength || box.data.length || 0);
+      }
+      try { return new Uint8Array(box.data); } catch { return null; }
+    }
+    if (Number.isFinite(box.start) && Number.isFinite(box.size) && box.size > 8) {
+      const start = box.start + (box.hdr_size || 8);
+      const end = box.start + box.size;
+      if (start >= 0 && end <= file.size) {
+        try { return new Uint8Array(await file.slice(start, end).arrayBuffer()); }
+        catch { return null; }
+      }
+    }
+    return null;
+  }
+
+  function childBox(box, type) {
+    if (!box) return null;
+    const list = box.boxes || (box.children && box.children.boxes) || [];
+    for (const child of list) {
+      if (child && child.type === type) return child;
+    }
+    return null;
+  }
+
+  function isTitleBox(box) {
+    if (!box || typeof box.type !== 'string') return false;
+    return box.type === '\u00A9nam' || box.type === '\u00A9NAM' || box.type === 'name';
+  }
+
+  // MP4/MOV files written by FFmpeg keep the per-track title in
+  // trak/udta/meta/ilst/©nam/data. This is the real container title and takes
+  // priority over the handler name (Microphone, Discord, ...).
+  async function readTrackTitles(mp4, file) {
+    const titles = {};
+    if (!mp4 || !mp4.moov || !mp4.moov.traks) return titles;
+    for (const trak of mp4.moov.traks) {
+      const id = trak.tkhd && trak.tkhd.track_id;
+      if (!id) continue;
+      let ilst = null;
+      const udta = trak.udta;
+      if (udta) {
+        const meta = childBox(udta, 'meta');
+        if (meta) ilst = childBox(meta, 'ilst');
+      }
+      if (!ilst || !ilst.boxes) continue;
+      for (const item of ilst.boxes) {
+        if (!isTitleBox(item)) continue;
+        const data = childBox(item, 'data');
+        const bytes = await readBoxBytes(data, file);
+        const text = cleanTrackName(decodeBoxText(bytes));
+        if (text) { titles[id] = text; break; }
+      }
+    }
+    return titles;
+  }
+
   async function readTrackCustomNames(mp4, file) {
     const names = {};
     if (!mp4 || !mp4.moov || !mp4.moov.traks) return names;
@@ -1241,9 +1502,12 @@
       };
       mp4.onReady = async (info) => {
         let names = {};
+        let titles = {};
         try { names = await readTrackCustomNames(mp4, file); }
         catch { names = {}; }
-        finish(resolve, { info, names, mp4 });
+        try { titles = await readTrackTitles(mp4, file); }
+        catch { titles = {}; }
+        finish(resolve, { info, names, titles, mp4 });
       };
       mp4.onError = (error) => finish(reject, error instanceof Error ? error : new Error(t('error.mp4Parse')));
       const readNext = async () => {
@@ -1570,6 +1834,7 @@
   }
 
   function toEmbeddedTrack(item, index) {
+    const containerTitle = item.containerTitle || item.titleTag || '';
     return {
       id: item.id || `embedded-${index + 1}`,
       kind: 'embedded',
@@ -1588,7 +1853,12 @@
       language: item.language || 'und',
       name: item.name || '',
       customName: item.customName || '',
-      title: languageTitle(item, index),
+      containerTitle,
+      title: trackTitle({
+        containerTitle,
+        customName: item.customName || '',
+        name: item.name || '',
+      }, index),
       channels: item.channels || 2,
       sampleRate: item.sampleRate || 48000,
       bitDepth: item.bitDepth || 16,
@@ -1673,6 +1943,7 @@
       if (token !== state.analysisToken || state.videoFile !== file) return;
       const info = result.info;
       const names = result.names || {};
+      const titles = result.titles || {};
       // MP4Box reports QuickTime PCM tracks as "metadata"; media.js recovers
       // their real audio parameters from the sample entry.
       const audioTracks = media.mp4AudioTracks
@@ -1682,7 +1953,9 @@
       state.embeddedTracks = audioTracks.map((item, index) => {
         const codec = codecInfo(item.codec);
         const customName = names[item.id] || '';
+        const containerTitle = titles[item.id] || '';
         const titleTrack = {
+          containerTitle,
           name: item.name || '',
           language: item.language || 'und',
           customName,
@@ -1701,7 +1974,8 @@
           language: item.language || 'und',
           name: item.name || '',
           customName,
-          title: languageTitle(titleTrack, index),
+          containerTitle,
+          title: trackTitle(titleTrack, index),
           channels: item.audio && item.audio.channel_count ? item.audio.channel_count : 2,
           sampleRate: item.audio && item.audio.sample_rate ? item.audio.sample_rate : 48000,
           bitDepth: item.audio && item.audio.sample_size ? item.audio.sample_size : 16,
@@ -1906,6 +2180,7 @@
   }
 
   function stopVideoSource() {
+    stopStreamUptime();
     if (state.hls) {
       try { state.hls.destroy(); } catch { /* ignore */ }
       state.hls = null;
@@ -1923,6 +2198,13 @@
     state.videoFile = null;
     state.videoReady = false;
     state.videoIsStream = false;
+    state.live = false;
+    state.streamSource = null;
+    state.streamPage = '';
+    state.streamUptimeBase = 0;
+    state.streamUptimeStamp = 0;
+    state.streamUptimeKnown = false;
+    state.streamLatency = 0;
     state.audioOnly = false;
     dom.playerCard.classList.remove('video-ready', 'is-playing', 'is-paused');
     document.body.classList.remove('is-playing');
@@ -1945,6 +2227,9 @@
     state.videoFile = file;
     state.videoUrl = file.isRemote ? file.url : URL.createObjectURL(file);
     state.videoIsStream = false;
+    state.live = false;
+    state.streamSource = null;
+    state.streamPage = '';
     state.audioOnly = false;
     state.videoReady = false;
     state.originalEnabled = true;
@@ -2020,12 +2305,12 @@
   }
 
   async function handleVideoError() {
-    if (!state.videoFile || state.mode !== 'video') return;
+    if (!state.videoFile || !isVideoMode()) return;
     if (state.audioFallbackBusy) return;
     const file = state.videoFile;
-    const wasStream = state.videoIsStream;
+    const wasStream = state.videoIsStream || state.mode === 'stream';
     if (!wasStream && !state.audioOnly && await tryAudioOnlyFallback(file)) return;
-    if (state.videoFile !== file || state.mode !== 'video') return;
+    if (state.videoFile !== file || !isVideoMode()) return;
     const name = file.name;
     state.videoFile = null;
     stopVideoSource();
@@ -2204,7 +2489,7 @@
   }
 
   async function togglePip() {
-    if (state.mode !== 'video' || !state.videoReady) {
+    if (!isVideoMode() || !state.videoReady) {
       toast(t('toast.openVideoFirst'));
       return;
     }
@@ -2414,7 +2699,7 @@
 
   // ── Bindings ──────────────────────────────────────────────
   function setSettingsExpanded(open) {
-    [dom.settingsBtn, dom.settingsBtnImage, dom.settingsBtnEmpty].forEach((button) => {
+    [dom.settingsBtn, dom.settingsBtnImage, dom.settingsBtnEmpty, dom.settingsBtnStream].forEach((button) => {
       if (button) button.setAttribute('aria-expanded', String(open));
     });
   }
@@ -2517,6 +2802,25 @@
     }
   }
 
+  function closeStreamSpeedPopover() {
+    if (!dom.streamSpeedPopover) return;
+    dom.streamSpeedPopover.classList.remove('open');
+    dom.streamSpeedBtn.setAttribute('aria-expanded', 'false');
+    scheduleIdle();
+  }
+
+  function toggleStreamSpeedPopover() {
+    const open = !dom.streamSpeedPopover.classList.contains('open');
+    dom.streamSpeedPopover.classList.toggle('open', open);
+    dom.streamSpeedBtn.setAttribute('aria-expanded', String(open));
+    if (open) {
+      clearTimeout(state.idleTimer);
+      dom.playerCard.classList.remove('ui-idle');
+    } else {
+      scheduleIdle();
+    }
+  }
+
   dom.openMediaSheet.addEventListener('click', openMediaPicker);
   dom.emptyOpen.addEventListener('click', openMediaPicker);
   dom.addAudioTop.addEventListener('click', openAudioPicker);
@@ -2524,6 +2828,7 @@
   dom.settingsBtn.addEventListener('click', () => toggleSettings(dom.settingsBtn));
   dom.settingsBtnImage.addEventListener('click', () => toggleSettings(dom.settingsBtnImage));
   dom.settingsBtnEmpty.addEventListener('click', () => toggleSettings(dom.settingsBtnEmpty));
+  dom.settingsBtnStream.addEventListener('click', () => toggleSettings(dom.settingsBtnStream));
   dom.settingsClose.addEventListener('click', closeSettings);
   dom.settingsBackdrop.addEventListener('click', closeSettings);
   dom.settingsSheet.addEventListener('click', (event) => {
@@ -2598,16 +2903,56 @@
 
   if (dom.streamQualitySelect) {
     dom.streamQualitySelect.addEventListener('change', () => {
-      const value = dom.streamQualitySelect.value;
-      state.streamQuality = STREAM_QUALITIES.has(value) ? value : 'best';
-      scheduleSettingsPersist();
+      setStreamQuality(dom.streamQualitySelect.value);
     });
   }
 
-  if (dom.streamlinkPath) {
-    dom.streamlinkPath.addEventListener('change', () => {
-      state.streamlinkPath = dom.streamlinkPath.value.trim();
+  dom.catchUpBtn.addEventListener('click', catchUpLive);
+  dom.streamPlayBtn.addEventListener('click', () => {
+    showChrome();
+    togglePlayback();
+  });
+  dom.streamMuteBtn.addEventListener('click', toggleMute);
+  dom.streamVolume.addEventListener('input', () => {
+    state.masterVolume = clamp(Number(dom.streamVolume.value) / 100, 0, 1);
+    if (state.masterVolume > 0) state.muted = false;
+    applyVolume();
+    scheduleSettingsPersist();
+    showChrome();
+  });
+  dom.streamFullscreenBtn.addEventListener('click', toggleFullscreen);
+  dom.streamSpeedBtn.addEventListener('click', toggleStreamSpeedPopover);
+  dom.streamSpeedRange.addEventListener('input', () => setRate(Number(dom.streamSpeedRange.value) / 100));
+  dom.streamSpeedChips.addEventListener('click', (event) => {
+    const button = event.target.closest('button[data-rate]');
+    if (!button) return;
+    setRate(parseFloat(button.dataset.rate), true);
+  });
+  document.addEventListener('pointerdown', (event) => {
+    if (dom.streamSpeedPopover && dom.streamSpeedPopover.classList.contains('open')) {
+      if (!dom.streamSpeedPopover.contains(event.target) && !dom.streamSpeedBtn.contains(event.target)) {
+        closeStreamSpeedPopover();
+      }
+    }
+  });
+
+  if (dom.resetSettingsBtn) {
+    dom.resetSettingsBtn.addEventListener('click', () => {
+      state.masterVolume = 0.9;
+      state.lastNonZeroVolume = 0.9;
+      state.muted = false;
+      state.loop = false;
+      state.fpsOverride = 'auto';
+      state.streamQuality = 'best';
+      if (dom.fpsSelect) dom.fpsSelect.value = 'auto';
+      setRate(1);
+      setLoop(false);
+      applyVolume();
+      updateFpsUi();
+      syncStreamUi();
       scheduleSettingsPersist();
+      postToHost('deplay:reset');
+      toast(t('toast.settingsReset'), 2600);
     });
   }
 
@@ -2653,27 +2998,28 @@
   });
 
   dom.video.addEventListener('loadedmetadata', () => {
-    if (!state.videoFile || state.mode !== 'video') return;
+    if (!state.videoFile || !isVideoMode()) return;
     state.videoReady = true;
     dom.playerCard.classList.add('video-ready');
     updateVideoInfo();
     updateTimeline();
     updateBuffered();
     updatePlaybackState();
+    if (state.mode === 'stream') updateStreamInfo();
   });
   dom.video.addEventListener('loadeddata', () => {
-    if (state.mode !== 'video') return;
+    if (!isVideoMode()) return;
     setLoading(false);
     updatePlaybackState();
   });
   dom.video.addEventListener('canplay', () => {
-    if (state.mode !== 'video') return;
+    if (!isVideoMode()) return;
     setLoading(false);
   });
   dom.video.addEventListener('play', () => {
     updatePlaybackState();
     startTick();
-    startFpsProbe();
+    if (state.mode === 'video') startFpsProbe();
     syncAudioTracks(true);
     showChrome();
   });
@@ -2681,7 +3027,7 @@
     setLoading(false);
     updatePlaybackState();
     startTick();
-    startFpsProbe();
+    if (state.mode === 'video') startFpsProbe();
   });
   dom.video.addEventListener('pause', () => {
     updatePlaybackState();
@@ -2694,10 +3040,11 @@
     syncAudioTracks(true);
   });
   dom.video.addEventListener('waiting', () => {
-    if (state.mode === 'video' && !dom.video.paused) setLoading(true, t('loading.buffering'));
+    if (isVideoMode() && !dom.video.paused) setLoading(true, t('loading.buffering'));
   });
   dom.video.addEventListener('timeupdate', () => {
     updateTimeline();
+    if (state.mode === 'stream') updateStreamLatency();
     if (!dom.video.paused && performance.now() - state.lastAudioSync > 900) {
       state.lastAudioSync = performance.now();
       syncAudioTracks(false);
@@ -2707,11 +3054,13 @@
     updateTimeline();
     updateBuffered();
     syncAudioTracks(true);
+    updateStreamLatency();
   });
   dom.video.addEventListener('durationchange', () => {
     updateTimeline();
     updateBuffered();
     updateVideoInfo();
+    if (state.mode === 'stream') updateStreamInfo();
   });
   dom.video.addEventListener('progress', updateBuffered);
   dom.video.addEventListener('ratechange', () => {
@@ -2722,7 +3071,7 @@
   dom.video.addEventListener('leavepictureinpicture', () => dom.pipBtn.classList.remove('pip-active'));
 
   dom.video.addEventListener('click', () => {
-    if (state.mode !== 'video') return;
+    if (!isVideoMode()) return;
     if (videoClickTimer) {
       clearTimeout(videoClickTimer);
       videoClickTimer = null;
@@ -2741,12 +3090,13 @@
 
   dom.stage.addEventListener('pointermove', () => {
     if (state.mode === 'image') showChrome();
-    else if (state.mode === 'video' && !dom.video.paused) showChrome();
+    else if (isVideoMode() && !dom.video.paused) showChrome();
   });
   dom.stage.addEventListener('pointerleave', () => {
-    if (state.mode !== 'video' && state.mode !== 'image') return;
-    if (state.mode === 'video' && (dom.video.paused || state.scrubbing)) return;
+    if (!isVideoMode() && state.mode !== 'image') return;
+    if (isVideoMode() && (dom.video.paused || state.scrubbing)) return;
     if (dom.speedPopover.classList.contains('open')) return;
+    if (dom.streamSpeedPopover && dom.streamSpeedPopover.classList.contains('open')) return;
     clearTimeout(state.idleTimer);
     state.idleTimer = setTimeout(() => {
       if (!state.scrubbing && !dom.speedPopover.classList.contains('open') && canAutoHide()) {
@@ -2779,16 +3129,72 @@
   });
 
   let dragDepth = 0;
-  const hasFileDrag = (dataTransfer) => Boolean(dataTransfer) && [...dataTransfer.types].includes('Files');
-  const hasUrlDrag = (dataTransfer) => Boolean(dataTransfer) && [...dataTransfer.types].includes('text/uri-list');
+  const DROP_TYPES = ['Files', 'text/uri-list', 'text/plain', 'text/html', 'text/x-moz-url', 'DownloadURL'];
+  const hasDropData = (dataTransfer) => {
+    if (!dataTransfer) return false;
+    const types = [...dataTransfer.types];
+    return DROP_TYPES.some((type) => types.includes(type));
+  };
+  const isShortcutName = (name) => /\.(url|webloc|website|desktop)$/i.test(String(name || ''));
+  const readFileText = (file) => {
+    if (file && typeof file.text === 'function') return file.text();
+    return new Promise((resolve, reject) => {
+      try {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = () => reject(reader.error || new Error('read error'));
+        reader.readAsText(file);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  };
+  const urlFromText = (text) => {
+    const value = String(text || '');
+    const shortcut = /(?:^|\n)\s*URL\s*=\s*([^\r\n]+)/i.exec(value);
+    if (shortcut) return shortcut[1].trim().replace(/^"|"$/g, '');
+    const href = /href\s*=\s*["']([^"']+)["']/i.exec(value);
+    if (href) return href[1].trim();
+    const plist = /<string>\s*([^<]+?)\s*<\/string>/i.exec(value);
+    if (plist && /^(https?|file):/i.test(plist[1].trim())) return plist[1].trim();
+    for (const line of value.split(/\r?\n/)) {
+      const candidate = line.trim();
+      if (/^(https?:\/\/|file:\/\/)/i.test(candidate)) return candidate;
+    }
+    return '';
+  };
+  async function handleDrop(dataTransfer) {
+    if (!dataTransfer) return;
+    const files = dataTransfer.files ? [...dataTransfer.files] : [];
+    const media = files.filter((file) => !isShortcutName(file.name) &&
+      (isVideoFile(file) || isImageFile(file) || isAudioFile(file)));
+    if (media.length) {
+      handleFiles(media);
+      return;
+    }
+    const textFiles = files.filter((file) => isShortcutName(file.name) ||
+      /^text\//i.test(file.type || '') || /json|xml/i.test(file.type || ''));
+    for (const file of textFiles) {
+      try {
+        const url = urlFromText(await readFileText(file));
+        if (url) { openDroppedUrl(url); return; }
+      } catch { /* try the next payload */ }
+    }
+    const url = readDropUrl(dataTransfer);
+    if (url) {
+      openDroppedUrl(url);
+      return;
+    }
+    if (files.length) toast(t('toast.unsupportedFile'));
+  }
   window.addEventListener('dragenter', (event) => {
-    if (!hasFileDrag(event.dataTransfer) && !hasUrlDrag(event.dataTransfer)) return;
+    if (!hasDropData(event.dataTransfer)) return;
     event.preventDefault();
     dragDepth += 1;
-    if (hasFileDrag(event.dataTransfer)) dom.dropVeil.classList.add('show');
+    dom.dropVeil.classList.add('show');
   });
   window.addEventListener('dragover', (event) => {
-    if (hasFileDrag(event.dataTransfer) || hasUrlDrag(event.dataTransfer)) {
+    if (hasDropData(event.dataTransfer)) {
       event.preventDefault();
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy';
     }
@@ -2802,12 +3208,7 @@
     event.preventDefault();
     dragDepth = 0;
     dom.dropVeil.classList.remove('show');
-    if (event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files.length) {
-      handleFiles(event.dataTransfer.files);
-      return;
-    }
-    const url = readDropUrl(event.dataTransfer);
-    if (url) openDroppedUrl(url);
+    handleDrop(event.dataTransfer).catch(() => toast(t('toast.unsupportedFile')));
   });
 
   // ── Keyboard ──────────────────────────────────────────────
@@ -2900,7 +3301,7 @@
     }
 
     if ((code === 'Space' || code === 'KeyK') && !(target && target.closest && target.closest('button, a, summary'))) {
-      if (state.mode === 'video') {
+      if (isVideoMode()) {
         event.preventDefault();
         togglePlayback();
       }
@@ -2909,9 +3310,9 @@
 
     if (code === 'ArrowLeft' || code === 'ArrowRight') {
       const direction = code === 'ArrowRight' ? 1 : -1;
-      if (state.mode === 'video') {
+      if (isVideoMode()) {
         event.preventDefault();
-        if (event.shiftKey) stepFrame(direction);
+        if (event.shiftKey && state.mode === 'video') stepFrame(direction);
         else seekBy(direction * 2);
       } else if (state.mode === 'image') {
         event.preventDefault();
@@ -2920,10 +3321,14 @@
       return;
     }
 
-    if (state.mode === 'video') {
+    if (isVideoMode()) {
       switch (code) {
-        case 'Comma': event.preventDefault(); stepFrame(-1); return;
-        case 'Period': event.preventDefault(); stepFrame(1); return;
+        case 'Comma':
+          if (state.mode !== 'video') return;
+          event.preventDefault(); stepFrame(-1); return;
+        case 'Period':
+          if (state.mode !== 'video') return;
+          event.preventDefault(); stepFrame(1); return;
         case 'BracketLeft': event.preventDefault(); adjustRate(-1); return;
         case 'BracketRight': event.preventDefault(); adjustRate(1); return;
         case 'ArrowUp':
@@ -2940,10 +3345,20 @@
           showChrome();
           return;
         case 'KeyM': event.preventDefault(); toggleMute(); return;
-        case 'KeyL': event.preventDefault(); setLoop(!state.loop, true); return;
+        case 'KeyC':
+          if (state.mode === 'stream') { event.preventDefault(); catchUpLive(); }
+          return;
+        case 'KeyL':
+          if (state.mode === 'video') { event.preventDefault(); setLoop(!state.loop, true); }
+          return;
         case 'KeyP': event.preventDefault(); togglePip(); return;
         case 'Home': event.preventDefault(); seekTo(0); showChrome(); return;
-        case 'End': event.preventDefault(); seekTo(dom.video.duration || 0); showChrome(); return;
+        case 'End':
+          event.preventDefault();
+          if (state.mode === 'stream') catchUpLive();
+          else seekTo(dom.video.duration || 0);
+          showChrome();
+          return;
         default: break;
       }
     }
@@ -3049,9 +3464,6 @@
     if (fps && FPS_CHOICES.has(fps)) result.fps = fps;
     const quality = params.get('slq');
     if (quality && STREAM_QUALITIES.has(quality)) result.streamQuality = quality;
-    result.streamlinkPath = params.get('slpath') || '';
-    result.streamlinkDetected = params.get('sldetected') || '';
-    result.streamlinkReady = params.get('slok') === '1';
     return result;
   }
 
@@ -3066,10 +3478,7 @@
     if (boot.fps) state.fpsOverride = boot.fps;
     if (dom.fpsSelect) dom.fpsSelect.value = state.fpsOverride;
     if (boot.streamQuality) state.streamQuality = boot.streamQuality;
-    if (boot.streamlinkPath) state.streamlinkPath = boot.streamlinkPath;
-    if (boot.streamlinkDetected) state.streamlinkDetected = boot.streamlinkDetected;
-    state.streamlinkReady = Boolean(boot.streamlinkReady);
-    syncStreamlinkUi();
+    syncStreamUi();
   }
 
   function currentSettings() {
@@ -3082,7 +3491,6 @@
       loop: state.loop,
       fps: state.fpsOverride,
       streamQuality: state.streamQuality,
-      streamlink: state.streamlinkPath || null,
     };
   }
 
@@ -3095,32 +3503,6 @@
         window.chrome.webview.postMessage(`deplay:settings:${JSON.stringify(currentSettings())}`);
       } catch { /* host messaging is optional */ }
     }, 250);
-  }
-
-  function syncStreamlinkUi() {
-    if (dom.streamQualitySelect) {
-      dom.streamQualitySelect.value = STREAM_QUALITIES.has(state.streamQuality) ? state.streamQuality : 'best';
-    }
-    if (dom.streamlinkPath && document.activeElement !== dom.streamlinkPath) {
-      dom.streamlinkPath.value = state.streamlinkPath || '';
-    }
-    const status = dom.streamlinkStatus;
-    if (!status) return;
-    const detected = state.streamlinkDetected || '';
-    let text;
-    if (state.streamlinkPath) {
-      text = state.streamlinkReady
-        ? t('streamlink.customReady', { path: detected })
-        : t('streamlink.customMissing');
-    } else if (state.streamlinkReady) {
-      text = t('streamlink.autoReady', { path: detected });
-    } else {
-      text = t('streamlink.missing');
-    }
-    status.textContent = text;
-    status.title = detected;
-    status.classList.toggle('ok', state.streamlinkReady);
-    status.classList.toggle('missing', !state.streamlinkReady);
   }
 
   // ── Diagnostics ───────────────────────────────────────────
@@ -3140,7 +3522,7 @@
     return !(window.Hls && window.Hls.isSupported && window.Hls.isSupported());
   }
 
-  function playStream(source, name, isHls, error) {
+  function playStream(source, name, isHls, error, live, page) {
     if (error) {
       toast(t('toast.streamlinkFailed', { message: error }), 7000);
       return;
@@ -3150,14 +3532,21 @@
     stopVideoSource();
     clearGallery();
     clearAudioTracks();
-    state.videoIsStream = true;
+    state.live = Boolean(live);
+    state.streamSource = source;
+    state.streamPage = page || '';
+    state.streamLatency = 0;
+    state.streamUptimeKnown = false;
+    state.streamUptimeBase = 0;
+    state.streamUptimeStamp = performance.now();
+    state.videoIsStream = state.live;
     state.audioOnly = false;
     state.videoFile = {
-      name: name || t('media.stream'),
+      name: name || (state.live ? t('media.stream') : t('media.video')),
       size: 0,
       type: '',
       isRemote: true,
-      stream: true,
+      stream: state.live,
       url: null,
     };
     state.videoUrl = null;
@@ -3165,17 +3554,37 @@
     state.originalEnabled = true;
     state.originalAutoMuted = false;
     state.masterVolume = clamp(state.masterVolume, 0, 1);
-    setMode('video');
+    setMode(state.live ? 'stream' : 'video');
     resetVideoUi();
-    setLoading(true, t('loading.stream'));
+    setLoading(true, state.live ? t('loading.stream') : t('loading.openingVideo'));
     updateVideoInfo();
     renderTracks();
-    dom.video.loop = state.loop;
-    setRate(state.rate);
+    dom.video.loop = state.live ? false : state.loop;
+    setRate(state.live ? Math.min(state.rate, 1) : state.rate);
     setLoop(state.loop);
 
+    const promoteToStream = () => {
+      if (state.mode === 'stream' || !state.live) return;
+      state.live = true;
+      state.videoIsStream = true;
+      if (state.videoFile) state.videoFile.stream = true;
+      setMode('stream');
+      startStreamUptime();
+      updateStreamInfo();
+    };
+
     if (isHls && !hlsUnsupported()) {
-      const hls = new window.Hls({ enableWorker: true, maxBufferLength: 30 });
+      const config = state.live
+        ? {
+            enableWorker: true,
+            lowLatencyMode: true,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 8,
+            maxBufferLength: 10,
+            backBufferLength: 30,
+          }
+        : { enableWorker: true, maxBufferLength: 60 };
+      const hls = new window.Hls(config);
       state.hls = hls;
       hls.on(window.Hls.Events.ERROR, (event, data) => {
         if (!data || !data.fatal) return;
@@ -3195,6 +3604,23 @@
       hls.on(window.Hls.Events.MEDIA_ATTACHED, () => {
         try { hls.loadSource(source); } catch { /* error event handles it */ }
       });
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        if (state.live) dom.video.play().catch(() => { /* autoplay may be blocked */ });
+      });
+      hls.on(window.Hls.Events.LEVEL_LOADED, (event, data) => {
+        const details = data && data.details;
+        if (!details) return;
+        if (details.live) promoteToStream();
+        else if (state.mode === 'stream') {
+          state.live = false;
+          state.videoIsStream = false;
+          stopStreamUptime();
+          if (state.videoFile) state.videoFile.stream = false;
+          setMode('video');
+        }
+        updateStreamLatency();
+      });
+      hls.on(window.Hls.Events.FRAG_CHANGED, updateStreamLatency);
       hls.attachMedia(dom.video);
     } else if (isHls) {
       setLoading(false);
@@ -3203,10 +3629,13 @@
     } else {
       dom.video.src = source;
       dom.video.load();
+      if (state.live) dom.video.play().catch(() => { /* autoplay may be blocked */ });
     }
 
+    if (state.live) startStreamUptime();
     applyVolume();
     updatePlaybackState();
+    updateStreamInfo();
   }
 
   function openStreamFromUrl() {
@@ -3221,7 +3650,14 @@
     if (error) toast(t('toast.streamlinkFailed', { message: error }), 7000);
     if (source) {
       const name = params.get('name') || t('media.stream');
-      playStream(source, name, params.get('hls') === '1', null);
+      playStream(
+        source,
+        name,
+        params.get('hls') === '1',
+        null,
+        params.get('live') === '1',
+        params.get('page') || ''
+      );
     }
     if (source || error) {
       try { history.replaceState(null, '', window.location.pathname); } catch { /* ignore */ }
@@ -3237,37 +3673,51 @@
     }
   }
 
+  function isDirectMediaUrl(url) {
+    try {
+      const parsed = new URL(url, window.location.href);
+      return /\.(mp4|m4v|mov|webm|ogv|mkv|avi|mp3|m4a|aac|flac|ogg|oga|opus|wav|m3u8?|m3u)$/i.test(parsed.pathname);
+    } catch {
+      return /\.(mp4|m4v|mov|webm|ogv|mkv|avi|mp3|m4a|aac|flac|ogg|oga|opus|wav|m3u8?|m3u)(\?|&|$)/i.test(url);
+    }
+  }
+
   function readDropUrl(dataTransfer) {
     if (!dataTransfer) return '';
     const chunks = [];
-    try { chunks.push(dataTransfer.getData('text/uri-list')); } catch { /* ignore */ }
-    try { chunks.push(dataTransfer.getData('text/plain')); } catch { /* ignore */ }
+    const types = ['text/uri-list', 'text/plain', 'text/x-moz-url', 'text/html', 'DownloadURL'];
+    for (const type of types) {
+      try { chunks.push(dataTransfer.getData(type)); } catch { /* ignore */ }
+    }
     for (const chunk of chunks) {
-      const lines = String(chunk || '').split(/\r?\n/);
-      for (const line of lines) {
-        const value = line.trim();
-        if (!value || value.startsWith('#')) continue;
-        if (/^https?:\/\//i.test(value) || /^file:\/\//i.test(value)) return value;
-      }
+      const text = String(chunk || '');
+      if (!text) continue;
+      const direct = urlFromText(text);
+      if (direct) return direct;
     }
     return '';
   }
 
   function openDroppedUrl(url) {
     if (!url) return;
-    if (/^file:\/\//i.test(url)) {
-      toast(t('streamlink.missing'), 5000);
+    const value = String(url).trim();
+    if (!value) return;
+    if (postToHost(`deplay:url:${value}`)) {
+      toast(t('toast.linkDropped'), 2600);
       return;
     }
-    if (postToHost(`deplay:url:${url}`)) {
-      toast(t('toast.streamlinkDropped'), 2600);
+    if (/^file:\/\//i.test(value)) {
+      toast(t('toast.linkDesktopOnly'), 5000);
       return;
     }
-    try {
-      playStream(url, decodeURIComponent(new URL(url).pathname.split('/').pop() || url), isPlaylistUrl(url), null);
-    } catch {
-      playStream(url, url, isPlaylistUrl(url), null);
+    if (isDirectMediaUrl(value)) {
+      let name = value;
+      try { name = decodeURIComponent(new URL(value).pathname.split('/').pop() || value); }
+      catch { /* keep the URL */ }
+      playStream(value, name, isPlaylistUrl(value), null, false, '');
+      return;
     }
+    toast(t('toast.linkDesktopOnly'), 5000);
   }
 
   // ── Desktop launch ────────────────────────────────────────
@@ -3368,7 +3818,7 @@
 
   function refreshEmbeddedTexts() {
     state.embeddedTracks.forEach((track) => {
-      track.title = languageTitle(track, track.index - 1);
+      track.title = trackTitle(track, track.index - 1);
       if (track.container) return;
       const codec = codecInfo(track.codec);
       track.reason = codec.reason || '';
@@ -3379,7 +3829,7 @@
     setRate(state.rate);
     setLoop(state.loop);
     updateFpsUi();
-    syncStreamlinkUi();
+    syncStreamUi();
     syncSidebar();
     refreshInfo();
     refreshEmbeddedTexts();

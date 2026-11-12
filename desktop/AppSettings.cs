@@ -48,9 +48,6 @@ namespace DePLay
         [DataMember(Name = "fps")]
         public string Fps;
 
-        [DataMember(Name = "streamlink")]
-        public string StreamlinkPath;
-
         [DataMember(Name = "streamQuality")]
         public string StreamQuality;
 
@@ -63,7 +60,6 @@ namespace DePLay
             Fps = "auto";
             Muted = false;
             Language = null;
-            StreamlinkPath = null;
             StreamQuality = "best";
         }
 
@@ -193,12 +189,6 @@ namespace DePLay
             }
             if (!knownFps) Fps = "auto";
 
-            if (StreamlinkPath != null)
-            {
-                StreamlinkPath = StreamlinkPath.Trim().Trim('"');
-                if (StreamlinkPath.Length == 0) StreamlinkPath = null;
-            }
-
             bool knownQuality = false;
             if (!string.IsNullOrEmpty(StreamQuality))
             {
@@ -225,7 +215,6 @@ namespace DePLay
             Append(text, "loop", Loop ? "1" : "0");
             Append(text, "fps", Fps);
             Append(text, "slq", StreamQuality);
-            Append(text, "slpath", StreamlinkPath);
             return text.ToString();
         }
 

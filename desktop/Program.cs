@@ -524,6 +524,8 @@ namespace DePLay
             string name,
             string error,
             bool hls,
+            bool live,
+            string page,
             string language,
             string preferences)
         {
@@ -541,6 +543,8 @@ namespace DePLay
                 parts.Add("stream=" + Uri.EscapeDataString(streamUrl));
                 if (!string.IsNullOrEmpty(name)) parts.Add("name=" + Uri.EscapeDataString(name));
                 if (hls) parts.Add("hls=1");
+                if (live) parts.Add("live=1");
+                if (!string.IsNullOrEmpty(page)) parts.Add("page=" + Uri.EscapeDataString(page));
             }
             if (!string.IsNullOrEmpty(error))
             {
@@ -1295,7 +1299,10 @@ namespace DePLay
         private string pendingStreamName;
         private string pendingStreamError;
         private bool pendingStreamHls;
+        private bool pendingStreamLive;
+        private string pendingStreamPage;
         private bool hasPendingStream;
+        private string currentStreamPage;
         private string currentLanguage;
         private bool nativeFullscreen;
         private FormBorderStyle savedBorderStyle;
@@ -1388,6 +1395,8 @@ namespace DePLay
                 string streamError = null;
                 bool targetIsUrl = false;
                 bool streamHls = false;
+                bool streamLive = false;
+                string streamPage = null;
                 bool hasStream = false;
                 lock (pendingLock)
                 {
@@ -1400,17 +1409,21 @@ namespace DePLay
                     streamName = pendingStreamName;
                     streamError = pendingStreamError;
                     streamHls = pendingStreamHls;
+                    streamLive = pendingStreamLive;
+                    streamPage = pendingStreamPage;
                     hasStream = hasPendingStream;
                     pendingStreamUrl = null;
                     pendingStreamName = null;
                     pendingStreamError = null;
                     pendingStreamHls = false;
+                    pendingStreamLive = false;
+                    pendingStreamPage = null;
                     hasPendingStream = false;
                 }
 
                 if (hasStream)
                 {
-                    NavigateToStream(streamUrl, streamName, streamError, streamHls);
+                    NavigateToStream(streamUrl, streamName, streamError, streamHls, streamLive, streamPage);
                 }
                 else if (!string.IsNullOrEmpty(target))
                 {
@@ -1493,6 +1506,8 @@ namespace DePLay
             const string settingsPrefix = "deplay:settings:";
             const string errorPrefix = "deplay:error:";
             const string urlPrefix = "deplay:url:";
+            const string streamQualityPrefix = "deplay:streamquality:";
+            const string resetCommand = "deplay:reset";
             try
             {
                 string message = e.TryGetWebMessageAsString();
@@ -1510,14 +1525,35 @@ namespace DePLay
                     AppSettings parsed;
                     if (AppSettings.TryParse(message.Substring(settingsPrefix.Length), out parsed))
                     {
-                        if (string.IsNullOrEmpty(parsed.StreamlinkPath) && !string.IsNullOrEmpty(settings.StreamlinkPath))
-                            parsed.StreamlinkPath = settings.StreamlinkPath;
                         settings = parsed;
                         currentLanguage = settings.Language;
                         NativeStrings.Language = currentLanguage;
                         AppSettings.Save(settings);
                         Log.Write("settings saved");
                     }
+                    return;
+                }
+
+                if (message.StartsWith(streamQualityPrefix, StringComparison.Ordinal))
+                {
+                    string quality = message.Substring(streamQualityPrefix.Length).Trim().ToLowerInvariant();
+                    if (Array.IndexOf(Streamlink.Qualities, quality) < 0) quality = "best";
+                    settings.StreamQuality = quality;
+                    AppSettings.Save(settings);
+                    Log.Write("stream quality: " + quality);
+                    if (!string.IsNullOrEmpty(currentStreamPage)) OpenUrl(currentStreamPage);
+                    return;
+                }
+
+                if (string.Equals(message, resetCommand, StringComparison.Ordinal))
+                {
+                    string language = settings.Language;
+                    settings = new AppSettings();
+                    settings.Language = language;
+                    AppSettings.Save(settings);
+                    currentLanguage = settings.Language;
+                    NativeStrings.Language = currentLanguage;
+                    Log.Write("settings reset");
                     return;
                 }
 
@@ -1584,9 +1620,11 @@ namespace DePLay
             webView.CoreWebView2.Navigate(url);
         }
 
-        private void NavigateToStream(string streamUrl, string name, string error, bool hls)
+        private void NavigateToStream(string streamUrl, string name, string error, bool hls, bool live, string page)
         {
             if (string.IsNullOrEmpty(streamUrl) && string.IsNullOrEmpty(error)) return;
+            if (!string.IsNullOrEmpty(page)) currentStreamPage = page;
+            else if (!string.IsNullOrEmpty(streamUrl)) currentStreamPage = null;
             if (!webReady)
             {
                 lock (pendingLock)
@@ -1595,16 +1633,16 @@ namespace DePLay
                     pendingStreamName = name;
                     pendingStreamError = error;
                     pendingStreamHls = hls;
+                    pendingStreamLive = live;
+                    pendingStreamPage = page;
                     hasPendingStream = true;
                 }
                 return;
             }
 
             string preferences = settings.ToQueryString();
-            string detected = Streamlink.PreferenceQuery(settings.StreamlinkPath);
-            if (!string.IsNullOrEmpty(detected)) preferences = preferences + "&" + detected;
-            string url = server.CreateStreamUrl(streamUrl, name, error, hls, currentLanguage, preferences);
-            Log.Write("navigate stream: " + (hls ? "hls" : "direct") +
+            string url = server.CreateStreamUrl(streamUrl, name, error, hls, live, page, currentLanguage, preferences);
+            Log.Write("navigate stream: " + (hls ? "hls" : "direct") + (live ? " live" : " vod") +
                 (string.IsNullOrEmpty(error) ? string.Empty : " (error)"));
             webView.CoreWebView2.Navigate(url);
         }
@@ -1649,16 +1687,17 @@ namespace DePLay
                     return;
                 }
                 if (Streamlink.IsPlaylistUrl(value))
-                    NavigateToStream(server.CreateRemoteUrl(value), name, null, true);
+                    NavigateToStream(server.CreateRemoteUrl(value), name, null, true, false, value);
                 else
-                    NavigateToStream(value, name, null, false);
+                    NavigateToStream(value, name, null, false, false, null);
                 return;
             }
 
-            string executable = Streamlink.Detect(settings.StreamlinkPath);
+            bool livePage = Streamlink.IsLivePageUrl(value);
+            string executable = Streamlink.Detect(null);
             if (executable == null)
             {
-                NavigateToStream(null, name, NativeStrings.Get("streamlink.notFound"), false);
+                NavigateToStream(null, name, NativeStrings.Get("streamlink.notFound"), false, livePage, value);
                 return;
             }
             if (!webReady)
@@ -1687,11 +1726,11 @@ namespace DePLay
                         RestoreWindow();
                         if (!ok)
                         {
-                            NavigateToStream(null, name, error, false);
+                            NavigateToStream(null, name, error, false, livePage, value);
                             return;
                         }
                         bool hls = Streamlink.IsPlaylistUrl(streamUrl);
-                        NavigateToStream(hls ? server.CreateRemoteUrl(streamUrl) : streamUrl, name, null, hls);
+                        NavigateToStream(hls ? server.CreateRemoteUrl(streamUrl) : streamUrl, name, null, hls, livePage, value);
                     }));
                 }
                 catch { /* form is closing */ }

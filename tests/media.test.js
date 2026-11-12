@@ -71,6 +71,7 @@ function mkvFixture() {
   ]);
   const aacEntry = concat([
     element(0xd7, uintBytes(1)),
+    element(0x73c5, uintBytes(1)),
     element(0x83, uintBytes(2)),
     element(0x86, stringBytes('A_AAC')),
     element(0x63a2, bytes([0x11, 0x90])),
@@ -79,6 +80,7 @@ function mkvFixture() {
   ]);
   const opusEntry = concat([
     element(0xd7, uintBytes(2)),
+    element(0x73c5, uintBytes(2)),
     element(0x83, uintBytes(2)),
     element(0x86, stringBytes('A_OPUS')),
     element(0x63a2, bytes([0x4f, 0x70, 0x75, 0x73, 0x48, 0x65, 0x61, 0x64, 1, 2, 0x38, 1, 0x80, 0xbb, 0, 0, 0, 0, 0])),
@@ -86,6 +88,18 @@ function mkvFixture() {
   ]);
   const tracks = element(0x1654ae6b, concat([element(0xae, aacEntry), element(0xae, opusEntry)]));
   const info = element(0x1549a966, element(0x2ad7b1, uintBytes(1000000)));
+
+  const trackTitleTag = (uid, title) => element(0x7373, concat([
+    element(0x63c0, element(0x63c5, uintBytes(uid))),
+    element(0x67c8, concat([
+      element(0x45a3, stringBytes('TITLE')),
+      element(0x4487, stringBytes(title)),
+    ])),
+  ]));
+  const tags = element(0x1254c367, concat([
+    trackTitleTag(1, 'English AAC'),
+    trackTitleTag(2, 'Opus Commentary'),
+  ]));
 
   const blockPayload = concat([
     bytes([0x81]),       // track 1
@@ -104,7 +118,7 @@ function mkvFixture() {
     element(0xa3, blockPayload),
     element(0xa3, secondBlock),
   ]));
-  return element(0x18538067, concat([info, tracks, cluster]));
+  return element(0x18538067, concat([info, tracks, tags, cluster]));
 }
 
 function aviChunk(id, payload) {
@@ -169,7 +183,9 @@ function source(data, name) {
   assert.strictEqual(mkvTracks[0].format, 'aac');
   assert.strictEqual(mkvTracks[0].supported, true);
   assert.strictEqual(mkvTracks[0].channels, 2);
+  assert.strictEqual(mkvTracks[0].containerTitle, 'English AAC');
   assert.strictEqual(mkvTracks[1].format, 'opus');
+  assert.strictEqual(mkvTracks[1].containerTitle, 'Opus Commentary');
 
   const aac = await media.extractAudio(mkv, mkvTracks[0]);
   assert.strictEqual(aac.mime, 'audio/aac');
@@ -187,6 +203,7 @@ function source(data, name) {
   assert.strictEqual(aviTracks[0].format, 'mp3');
   assert.strictEqual(aviTracks[0].channels, 2);
   assert.strictEqual(aviTracks[0].name, 'Commentary');
+  assert.strictEqual(aviTracks[0].containerTitle, 'Commentary');
 
   const mp3 = await media.extractAudio(avi, aviTracks[0]);
   assert.strictEqual(mp3.mime, 'audio/mpeg');

@@ -91,6 +91,48 @@ namespace DePLay
                    path.EndsWith(".m3u", StringComparison.OrdinalIgnoreCase);
         }
 
+        /// <summary>
+        /// Heuristic for page URLs: known VOD/clip/category pages are not live,
+        /// while a channel page (or an unknown site) is treated as a live stream.
+        /// The web player can still promote a direct HLS URL to live mode when
+        /// hls.js reports a live playlist, so this only decides the initial UI.
+        /// </summary>
+        public static bool IsLivePageUrl(string value)
+        {
+            if (!IsHttpUrl(value)) return false;
+            Uri uri;
+            if (!Uri.TryCreate(value, UriKind.Absolute, out uri)) return true;
+            string host = uri.Host.ToLowerInvariant();
+            string path = (uri.AbsolutePath ?? string.Empty).ToLowerInvariant();
+            string[] parts = path.Trim('/').Split(new char[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
+
+            if (host == "youtu.be" || host.EndsWith(".youtube.com") || host == "youtube.com")
+            {
+                if (path.StartsWith("/live/") || path.EndsWith("/live")) return true;
+                return false;
+            }
+            if (host.EndsWith("twitch.tv"))
+            {
+                if (path.StartsWith("/videos/") || path.StartsWith("/clip/") ||
+                    path.StartsWith("/directory") || path.StartsWith("/search") ||
+                    path.StartsWith("/settings") || path.StartsWith("/subscriptions"))
+                    return false;
+                return parts.Length == 1;
+            }
+            if (host.EndsWith("kick.com"))
+            {
+                if (path.StartsWith("/video/") || path.StartsWith("/clips/") ||
+                    path.StartsWith("/category/") || path.StartsWith("/browse"))
+                    return false;
+                return parts.Length == 1;
+            }
+            if (host.EndsWith("vimeo.com") || host.EndsWith("dailymotion.com"))
+            {
+                return false;
+            }
+            return true;
+        }
+
         public static string NameFromUrl(string value)
         {
             try
@@ -213,22 +255,6 @@ namespace DePLay
                 catch { /* skip malformed PATH entries */ }
             }
             return null;
-        }
-
-        /// <summary>
-        /// Adds the detected Streamlink location to the page URL so the settings
-        /// panel can show whether the tool is ready.
-        /// </summary>
-        public static string PreferenceQuery(string configuredPath)
-        {
-            string detected = Detect(configuredPath);
-            StringBuilder text = new StringBuilder();
-            text.Append("slok=").Append(detected == null ? "0" : "1");
-            if (detected != null)
-            {
-                text.Append("&sldetected=").Append(Uri.EscapeDataString(detected));
-            }
-            return text.ToString();
         }
 
         public static bool Resolve(

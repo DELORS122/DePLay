@@ -274,6 +274,14 @@ namespace DePLay
                 errors.Add("streamlink: a channel page was mistaken for a direct media file");
             if (Streamlink.NameFromUrl("https://www.twitch.tv/example") != "example")
                 errors.Add("streamlink: stream name was not extracted from the URL");
+            if (!Streamlink.IsLivePageUrl("https://www.twitch.tv/example"))
+                errors.Add("streamlink: a Twitch channel page was not detected as live");
+            if (Streamlink.IsLivePageUrl("https://www.twitch.tv/videos/123456"))
+                errors.Add("streamlink: a Twitch VOD page was detected as live");
+            if (Streamlink.IsLivePageUrl("https://www.youtube.com/watch?v=abc"))
+                errors.Add("streamlink: a YouTube watch page was detected as live");
+            if (!Streamlink.IsLivePageUrl("https://www.youtube.com/live/abc"))
+                errors.Add("streamlink: a YouTube live page was not detected as live");
 
             string baseDir = AppDomain.CurrentDomain.BaseDirectory;
             string folder = Path.Combine(baseDir, "streamlink");

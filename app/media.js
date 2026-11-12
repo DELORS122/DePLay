@@ -118,6 +118,14 @@
     CODEC_PRIVATE: 0x63A2,
     NAME: 0x536E,
     LANGUAGE: 0x22B59C,
+    TRACK_UID: 0x73C5,
+    TAGS: 0x1254C367,
+    TAG: 0x7373,
+    TARGETS: 0x63C0,
+    TAG_TRACK_UID: 0x63C5,
+    SIMPLE_TAG: 0x67C8,
+    TAG_NAME: 0x45A3,
+    TAG_STRING: 0x4487,
     AUDIO: 0xE1,
     SAMPLING_FREQUENCY: 0xB5,
     CHANNELS: 0x9F,
@@ -188,6 +196,7 @@
     let scale = 1000000;
     const tracks = [];
     let tracksElement = null;
+    let tagsElement = null;
 
     for (let i = 0; i < children.length; i += 1) {
       const child = children[i];
@@ -198,6 +207,8 @@
         }
       } else if (child.id === ID.TRACKS) {
         tracksElement = child;
+      } else if (child.id === ID.TAGS) {
+        tagsElement = child;
       }
     }
     if (!tracksElement) return null;
@@ -206,7 +217,7 @@
     for (let i = 0; i < entries.length; i += 1) {
       if (entries[i].id !== ID.TRACK_ENTRY) continue;
       const fields = ebmlChildren(data, entries[i].start, entries[i].start + entries[i].size);
-      const track = { number: 0, type: 0, codec: '', codecPrivate: null, name: '', language: '' };
+      const track = { number: 0, type: 0, codec: '', codecPrivate: null, name: '', language: '', uid: 0, titleTag: '' };
       for (let j = 0; j < fields.length; j += 1) {
         const field = fields[j];
         if (field.id === ID.TRACK_NUMBER) track.number = ebmlUint(data, field);
@@ -215,6 +226,7 @@
         else if (field.id === ID.CODEC_PRIVATE) track.codecPrivate = data.slice(field.start, field.start + field.size);
         else if (field.id === ID.NAME) track.name = textOf(data, field.start, field.size);
         else if (field.id === ID.LANGUAGE) track.language = textOf(data, field.start, field.size);
+        else if (field.id === ID.TRACK_UID) track.uid = ebmlUint(data, field);
         else if (field.id === ID.AUDIO) {
           const audio = ebmlChildren(data, field.start, field.start + field.size);
           for (let k = 0; k < audio.length; k += 1) {
@@ -225,6 +237,47 @@
         }
       }
       tracks.push(track);
+    }
+
+    // Per-track titles live in Segment > Tags > Tag > Targets/TagTrackUID +
+    // SimpleTag/TagName=TITLE + TagString. They are the real container titles
+    // written by mkvmerge/FFmpeg and must win over handler names.
+    if (tagsElement) {
+      const titles = new Map();
+      const tags = ebmlChildren(data, tagsElement.start, tagsElement.start + tagsElement.size);
+      for (let i = 0; i < tags.length; i += 1) {
+        if (tags[i].id !== ID.TAG) continue;
+        const tagFields = ebmlChildren(data, tags[i].start, tags[i].start + tags[i].size);
+        const targets = [];
+        let title = '';
+        for (let j = 0; j < tagFields.length; j += 1) {
+          const field = tagFields[j];
+          if (field.id === ID.TARGETS) {
+            const targetFields = ebmlChildren(data, field.start, field.start + field.size);
+            for (let k = 0; k < targetFields.length; k += 1) {
+              if (targetFields[k].id === ID.TAG_TRACK_UID) targets.push(ebmlUint(data, targetFields[k]));
+            }
+          } else if (field.id === ID.SIMPLE_TAG) {
+            const simple = ebmlChildren(data, field.start, field.start + field.size);
+            let name = '';
+            let value = '';
+            for (let k = 0; k < simple.length; k += 1) {
+              if (simple[k].id === ID.TAG_NAME) name = textOf(data, simple[k].start, simple[k].size).trim();
+              else if (simple[k].id === ID.TAG_STRING) value = textOf(data, simple[k].start, simple[k].size).trim();
+            }
+            if (/^title$/i.test(name) && value) title = value;
+          }
+        }
+        if (title) {
+          for (let j = 0; j < targets.length; j += 1) {
+            if (targets[j]) titles.set(targets[j], title);
+          }
+        }
+      }
+      for (let i = 0; i < tracks.length; i += 1) {
+        const uid = tracks[i].uid;
+        if (uid && titles.has(uid)) tracks[i].titleTag = titles.get(uid);
+      }
     }
 
     return { scale, tracks, segment };
@@ -581,6 +634,7 @@
         language: track.language || 'und',
         name: track.name || '',
         customName: track.name || '',
+        containerTitle: track.titleTag || '',
         channels: track.channels || (asc && asc.channels) || 2,
         sampleRate: track.sampleRate || (asc && asc.sampleRate) || 48000,
         bitDepth: track.bitDepth || 16,
@@ -747,6 +801,7 @@
         language: 'und',
         name: stream.name || '',
         customName: stream.name || '',
+        containerTitle: stream.name || '',
         channels: stream.channels || 2,
         sampleRate: stream.sampleRate || 48000,
         bitDepth: stream.bits || 16,

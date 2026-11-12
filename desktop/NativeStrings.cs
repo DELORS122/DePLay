@@ -59,9 +59,9 @@ namespace DePLay
                 "Settings could not be saved. Details are in the log:\n{log}",
                 "Die Einstellungen konnten nicht gespeichert werden. Einzelheiten im Protokoll:\n{log}");
             Add(map, "streamlink.notFound",
-                "Streamlink не найден. Укажите путь к streamlink.exe в настройках DePLay.",
-                "Streamlink was not found. Set the path to streamlink.exe in the DePLay settings.",
-                "Streamlink wurde nicht gefunden. Legen Sie den Pfad zu streamlink.exe in den DePLay-Einstellungen fest.");
+                "Streamlink не найден. Положите streamlink.exe рядом с DePLay.exe.",
+                "Streamlink was not found. Place streamlink.exe next to DePLay.exe.",
+                "Streamlink wurde nicht gefunden. Legen Sie streamlink.exe neben DePLay.exe ab.");
             Add(map, "streamlink.resolving",
                 "Streamlink ищет поток…",
                 "Streamlink is resolving the stream…",
