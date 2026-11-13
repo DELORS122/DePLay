@@ -150,7 +150,7 @@
               </button>
               <button class="ctrl skip-btn" id="fwd2" type="button" title="Вперёд на 2 секунды (→)">+2с</button>
               <div class="volume-wrap">
-                <button class="ctrl" id="muteBtn" type="button" title="Без звука (M)" aria-label="Без звука">
+                <button class="ctrl mute-btn" id="muteBtn" type="button" title="Без звука (M)" aria-label="Без звука">
                   <svg class="ico vol-high"><use href="#i-volume-high"></use></svg>
                   <svg class="ico vol-low"><use href="#i-volume-low"></use></svg>
                   <svg class="ico vol-mute"><use href="#i-volume-mute"></use></svg>
@@ -198,6 +198,14 @@
               </button>
             </div>
           </div>
+          <div class="stream-dvr" id="streamDvr" role="slider" tabindex="0" title="Перемотка эфира" aria-label="Перемотка эфира" aria-valuemin="0" aria-valuemax="0" aria-valuenow="0" hidden>
+            <span class="stream-dvr-offset" id="streamDvrOffset">−0:00</span>
+            <div class="stream-dvr-track" id="streamDvrTrack">
+              <div class="stream-dvr-fill" id="streamDvrFill"></div>
+              <div class="stream-dvr-thumb" id="streamDvrThumb"></div>
+            </div>
+            <span class="stream-dvr-live">LIVE</span>
+          </div>
           <div class="controls-row">
             <div class="controls-left">
               <div class="speed-wrap">
@@ -221,7 +229,7 @@
                 <svg class="ico ico-pause"><use href="#i-pause"></use></svg>
               </button>
               <div class="volume-wrap">
-                <button class="ctrl" id="streamMuteBtn" type="button" title="Без звука (M)" aria-label="Без звука">
+                <button class="ctrl mute-btn" id="streamMuteBtn" type="button" title="Без звука (M)" aria-label="Без звука">
                   <svg class="ico vol-high"><use href="#i-volume-high"></use></svg>
                   <svg class="ico vol-low"><use href="#i-volume-low"></use></svg>
                   <svg class="ico vol-mute"><use href="#i-volume-mute"></use></svg>

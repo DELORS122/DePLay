@@ -239,17 +239,21 @@ namespace DePLay
             }
 
             AppSettings clamped;
-            if (AppSettings.TryParse("{\"volume\":5,\"rate\":40,\"fps\":\"999\",\"language\":\"xx\",\"streamQuality\":\"8000p\"}", out clamped))
+            if (AppSettings.TryParse("{\"volume\":5,\"rate\":40,\"fps\":\"999\",\"language\":\"xx\",\"streamQuality\":\"720p60\"}", out clamped))
             {
                 if (clamped.Volume > 1 || clamped.Rate > 3 || clamped.Fps != "auto")
                     errors.Add("settings normalization did not clamp invalid values");
-                if (clamped.StreamQuality != "best")
-                    errors.Add("settings normalization did not reset an invalid stream quality");
+                if (clamped.StreamQuality != "720p60")
+                    errors.Add("settings normalization did not keep a dynamic stream quality");
             }
             else
             {
                 errors.Add("settings JSON with invalid values could not be parsed");
             }
+
+            AppSettings badQuality;
+            if (AppSettings.TryParse("{\"streamQuality\":\"bad quality!\"}", out badQuality) && badQuality.StreamQuality != "best")
+                errors.Add("settings normalization did not reset a malformed stream quality");
 
             WriteLine("settings store: OK");
         }

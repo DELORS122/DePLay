@@ -109,6 +109,11 @@
     streamUptime: $('streamUptime'),
     streamLatency: $('streamLatency'),
     catchUpBtn: $('catchUpBtn'),
+    streamDvr: $('streamDvr'),
+    streamDvrTrack: $('streamDvrTrack'),
+    streamDvrFill: $('streamDvrFill'),
+    streamDvrThumb: $('streamDvrThumb'),
+    streamDvrOffset: $('streamDvrOffset'),
     streamSpeedBtn: $('streamSpeedBtn'),
     streamSpeedLabel: $('streamSpeedLabel'),
     streamSpeedPopover: $('streamSpeedPopover'),
@@ -150,10 +155,16 @@
     streamUptimeKnown: false,
     streamUptimeTimer: null,
     streamLatency: 0,
+    streamDvrDragging: false,
+    streamDvrTarget: 0,
+    streamLiveOffsetPending: 0,
     audioOnly: false,
     audioFallbackBusy: false,
     hls: null,
     streamQuality: 'best',
+    streamQualityActive: 'best',
+    streamQualities: ['best', '1080p', '720p', '480p', '360p', 'worst'],
+    streamSwapping: false,
     originalEnabled: true,
     originalAutoMuted: false,
     audioTracks: [],
@@ -537,6 +548,7 @@
     state.mode = mode;
     dom.playerCard.classList.remove('mode-empty', 'mode-video', 'mode-image', 'mode-stream');
     dom.playerCard.classList.add(`mode-${mode}`);
+    dom.playerCard.classList.toggle('has-media', mode !== 'empty');
     const videoLike = mode === 'video' || mode === 'stream';
     dom.video.hidden = !videoLike;
     dom.imageViewport.hidden = mode !== 'image';
@@ -548,6 +560,7 @@
     syncSidebar();
     refreshInfo();
     updatePlaybackState();
+    updateStreamDvr();
     if (mode === 'image' || mode === 'stream') showChrome();
   }
 
@@ -624,17 +637,9 @@
   function seekTo(time) {
     if (!isVideoMode() || !state.videoReady) return;
     if (state.mode === 'stream' && state.live) {
-      let min = 0;
-      let max = Number.isFinite(dom.video.duration) ? dom.video.duration : 0;
-      try {
-        const ranges = dom.video.seekable;
-        if (ranges && ranges.length) {
-          min = ranges.start(0);
-          max = ranges.end(ranges.length - 1);
-        }
-      } catch { /* keep the fallback window */ }
-      if (max <= min) return;
-      const target = clamp(time, min, Math.max(min, max - 0.5));
+      const dvr = streamDvrWindow();
+      if (!dvr) return;
+      const target = clamp(time, dvr.start, Math.max(dvr.start, dvr.end - 0.5));
       try { dom.video.currentTime = target; } catch { /* ignore */ }
       updateStreamLatency();
       updateTimeline();
@@ -728,11 +733,16 @@
 
   function applyVolume() {
     const master = clamp(state.masterVolume, 0, 1);
-    const embeddedActive = state.embeddedTracks.some((track) => track.enabled && track.status !== 'error');
-    if (embeddedActive && state.originalEnabled) {
+    // The native <video> audio is only a fallback for containers whose audio
+    // cannot be extracted. When the container has mixable tracks, native audio
+    // must stay muted even if every track is switched off — otherwise the
+    // default track leaks through and "disable all" is never silent.
+    const mixable = state.embeddedTracks.filter((track) => track.supported && track.status !== 'error');
+    const muteNative = mixable.length > 0;
+    if (muteNative && state.originalEnabled) {
       state.originalEnabled = false;
       state.originalAutoMuted = true;
-    } else if (!embeddedActive && state.originalAutoMuted) {
+    } else if (!muteNative && state.originalAutoMuted) {
       state.originalEnabled = true;
       state.originalAutoMuted = false;
     }
@@ -792,6 +802,7 @@
     dom.timeline.setAttribute('aria-valuenow', String(Math.round(current)));
     dom.timeline.setAttribute('aria-valuemax', String(Math.round(duration)));
     dom.timeline.setAttribute('aria-valuetext', t('aria.time', { current: fmtTime(current), total: fmtTime(duration) }));
+    updateStreamDvr();
   }
 
   function updateBuffered() {
@@ -802,6 +813,7 @@
       for (let i = 0; i < ranges.length; i += 1) end = Math.max(end, ranges.end(i));
     } catch { /* ignore */ }
     dom.buffered.style.transform = `scaleX(${duration > 0 ? clamp(end / duration, 0, 1) : 0})`;
+    updateStreamDvr();
   }
 
   // ── Live stream helpers ───────────────────────────────────
@@ -831,9 +843,8 @@
     dom.streamUptime.textContent = fmtUptime(streamUptimeSeconds());
     dom.streamLatency.textContent = `${Math.max(0, state.streamLatency).toFixed(1)} ${t('stream.seconds')}`;
     dom.catchUpBtn.disabled = !state.live;
-    if (dom.streamQualitySelect) {
-      dom.streamQualitySelect.value = STREAM_QUALITIES.has(state.streamQuality) ? state.streamQuality : 'best';
-    }
+    renderQualityOptions();
+    updateStreamDvr();
   }
 
   function updateStreamLatency() {
@@ -853,6 +864,7 @@
     if (dom.streamLatency) {
       dom.streamLatency.textContent = `${latency.toFixed(1)} ${t('stream.seconds')}`;
     }
+    updateStreamDvr();
   }
 
   function catchUpLive() {
@@ -872,6 +884,109 @@
     if (dom.video.paused) dom.video.play().catch(() => { /* autoplay may be blocked */ });
     updateStreamLatency();
     showChrome();
+  }
+
+  function streamPlaylistDetails() {
+    const hls = state.hls;
+    if (!hls || !Array.isArray(hls.levels) || !hls.levels.length) return null;
+    let best = null;
+    hls.levels.forEach((level) => {
+      const details = level && level.details;
+      if (!details || !details.fragments || !details.fragments.length) return;
+      if (!best || (details.endSN || 0) > (best.endSN || 0)) best = details;
+    });
+    return best;
+  }
+
+  function streamSeekable() {
+    let start;
+    let end;
+    try {
+      const ranges = dom.video.seekable;
+      if (!ranges || !ranges.length) return null;
+      start = ranges.start(0);
+      end = ranges.end(ranges.length - 1);
+    } catch {
+      return null;
+    }
+    const details = streamPlaylistDetails();
+    if (details && details.fragments && details.fragments.length) {
+      const first = details.fragments[0];
+      const last = details.fragments[details.fragments.length - 1];
+      if (first && Number.isFinite(first.start)) start = Math.max(start, first.start);
+      if (last && Number.isFinite(last.start) && Number.isFinite(last.duration)) {
+        end = Math.min(end, last.start + last.duration);
+      }
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null;
+    return { start, end };
+  }
+
+  function streamLiveEdge() {
+    const details = streamPlaylistDetails();
+    if (details && details.fragments && details.fragments.length) {
+      const last = details.fragments[details.fragments.length - 1];
+      if (Number.isFinite(last.start) && Number.isFinite(last.duration)) {
+        return last.start + last.duration;
+      }
+    }
+    const seekable = streamSeekable();
+    return seekable ? seekable.end : null;
+  }
+
+  function streamDvrWindow() {
+    const seekable = streamSeekable();
+    if (!seekable) return null;
+    const edge = streamLiveEdge();
+    const end = Number.isFinite(edge) && edge > seekable.start ? edge : seekable.end;
+    if (!(end - seekable.start >= 1)) return null;
+    return { start: seekable.start, end };
+  }
+
+  function applyPendingStreamOffset() {
+    const pending = state.streamLiveOffsetPending;
+    if (!(pending > 0.5) || !state.videoReady) return;
+    const seekable = streamSeekable();
+    const edge = streamLiveEdge();
+    if (!seekable || !Number.isFinite(edge)) return;
+    state.streamLiveOffsetPending = 0;
+    const target = clamp(edge - pending, seekable.start, Math.max(seekable.start, edge - 0.5));
+    try { dom.video.currentTime = target; } catch { /* ignore */ }
+  }
+
+  function updateStreamDvr() {
+    if (!dom.streamDvr) return;
+    if (state.mode !== 'stream' || !state.live || !state.videoReady) {
+      dom.streamDvr.hidden = true;
+      return;
+    }
+    applyPendingStreamOffset();
+    const dvr = streamDvrWindow();
+    if (!dvr) {
+      dom.streamDvr.hidden = true;
+      return;
+    }
+    dom.streamDvr.hidden = false;
+    const span = dvr.end - dvr.start;
+    const current = clamp(
+      state.streamDvrDragging && Number.isFinite(state.streamDvrTarget)
+        ? state.streamDvrTarget
+        : (Number.isFinite(dom.video.currentTime) ? dom.video.currentTime : dvr.end),
+      dvr.start,
+      dvr.end
+    );
+    const ratio = clamp((current - dvr.start) / span, 0, 1);
+    const behind = Math.max(0, dvr.end - current);
+    dom.streamDvrFill.style.transform = `scaleX(${ratio})`;
+    dom.streamDvrThumb.style.left = `${ratio * 100}%`;
+    dom.streamDvrOffset.textContent = `−${fmtTime(behind)}`;
+    dom.streamDvr.setAttribute('aria-valuemin', '0');
+    dom.streamDvr.setAttribute('aria-valuemax', String(Math.round(span)));
+    dom.streamDvr.setAttribute('aria-valuenow', String(Math.round(current - dvr.start)));
+    dom.streamDvr.setAttribute(
+      'aria-valuetext',
+      behind < 1 ? t('stream.atLive') : t('aria.streamDvr', { time: fmtTime(behind) })
+    );
   }
 
   function stopStreamUptime() {
@@ -949,17 +1064,30 @@
       dom.streamMuteBtn.dataset.level = level;
     }
     if (dom.streamQualitySelect) {
-      dom.streamQualitySelect.value = STREAM_QUALITIES.has(state.streamQuality) ? state.streamQuality : 'best';
+      renderQualityOptions();
     }
     setRate(state.rate);
   }
 
   function setStreamQuality(value) {
-    state.streamQuality = STREAM_QUALITIES.has(value) ? value : 'best';
+    const quality = state.streamQualities.includes(value) ? value : 'best';
+    const previous = state.streamQualityActive;
+    state.streamQuality = quality;
     scheduleSettingsPersist();
-    if (state.live && postToHost(`deplay:streamquality:${state.streamQuality}`)) {
-      toast(t('toast.streamQuality', { quality: state.streamQuality.toUpperCase() }), 2200);
-    } else {
+    if (!HAS_HOST) {
+      toast(t('toast.streamQualityLocal'), 2600);
+      return;
+    }
+    if (quality === previous) {
+      renderQualityOptions();
+      return;
+    }
+    state.streamSwapping = true;
+    renderQualityOptions();
+    if (!postToHost(`deplay:streamquality:${quality}`)) {
+      state.streamSwapping = false;
+      state.streamQuality = previous;
+      renderQualityOptions();
       toast(t('toast.streamQualityLocal'), 2600);
     }
   }
@@ -1212,7 +1340,6 @@
         try { track.el.pause(); } catch { /* ignore */ }
       }
     });
-    if (!enable) state.originalEnabled = true;
     applyVolume();
     renderTracks();
     if (enable) {
@@ -2181,6 +2308,10 @@
 
   function stopVideoSource() {
     stopStreamUptime();
+    if (state.streamMetaHandler) {
+      dom.video.removeEventListener('loadedmetadata', state.streamMetaHandler);
+      state.streamMetaHandler = null;
+    }
     if (state.hls) {
       try { state.hls.destroy(); } catch { /* ignore */ }
       state.hls = null;
@@ -2205,6 +2336,8 @@
     state.streamUptimeStamp = 0;
     state.streamUptimeKnown = false;
     state.streamLatency = 0;
+    state.streamDvrDragging = false;
+    state.streamLiveOffsetPending = 0;
     state.audioOnly = false;
     dom.playerCard.classList.remove('video-ready', 'is-playing', 'is-paused');
     document.body.classList.remove('is-playing');
@@ -2587,6 +2720,45 @@
     hidePreview();
   }
 
+  // ── Live DVR pointer ──────────────────────────────────────
+  function timeFromDvrPointer(clientX) {
+    const dvr = streamDvrWindow();
+    const rect = dom.streamDvrTrack.getBoundingClientRect();
+    if (!dvr || rect.width <= 0) return null;
+    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+    return dvr.start + ratio * (dvr.end - dvr.start);
+  }
+
+  function onDvrDown(event) {
+    if (state.mode !== 'stream' || !state.live || !state.videoReady) return;
+    if (event.pointerType === 'mouse' && event.button !== 0) return;
+    const target = timeFromDvrPointer(event.clientX);
+    if (target === null) return;
+    event.preventDefault();
+    try { dom.streamDvrTrack.setPointerCapture(event.pointerId); } catch { /* ignore */ }
+    state.streamDvrDragging = true;
+    state.streamDvrTarget = target;
+    dom.streamDvr.classList.add('is-scrubbing');
+    seekTo(target);
+    clearTimeout(state.idleTimer);
+  }
+
+  function onDvrMove(event) {
+    if (!state.streamDvrDragging) return;
+    const target = timeFromDvrPointer(event.clientX);
+    if (target === null) return;
+    state.streamDvrTarget = target;
+    seekTo(target);
+  }
+
+  function onDvrUp() {
+    if (!state.streamDvrDragging) return;
+    state.streamDvrDragging = false;
+    dom.streamDvr.classList.remove('is-scrubbing');
+    updateStreamDvr();
+    showChrome();
+  }
+
   // ── Image gestures ────────────────────────────────────────
   function imageMidpoint() {
     const values = [...state.pointers.values()];
@@ -2944,6 +3116,7 @@
       state.loop = false;
       state.fpsOverride = 'auto';
       state.streamQuality = 'best';
+      state.streamQualityActive = 'best';
       if (dom.fpsSelect) dom.fpsSelect.value = 'auto';
       setRate(1);
       setLoop(false);
@@ -2966,6 +3139,13 @@
   dom.timeline.addEventListener('pointerenter', (event) => {
     if (state.mode === 'video' && state.videoReady && event.pointerType !== 'touch') updateHover(event);
   });
+
+  if (dom.streamDvrTrack) {
+    dom.streamDvrTrack.addEventListener('pointerdown', onDvrDown);
+    dom.streamDvrTrack.addEventListener('pointermove', onDvrMove);
+    dom.streamDvrTrack.addEventListener('pointerup', onDvrUp);
+    dom.streamDvrTrack.addEventListener('pointercancel', onDvrUp);
+  }
 
   dom.imageViewport.addEventListener('pointerdown', onImagePointerDown);
   dom.imageViewport.addEventListener('pointermove', onImagePointerMove);
@@ -3417,9 +3597,50 @@
     }
   })();
   const FPS_CHOICES = new Set(['auto', '23.976', '24', '25', '29.97', '30', '48', '50', '59.94', '60', '120']);
-  const STREAM_QUALITIES = new Set(['best', '1080p', '720p', '480p', '360p', 'worst']);
+  const DEFAULT_STREAM_QUALITIES = ['best', '1080p', '720p', '480p', '360p', 'worst'];
+  const QUALITY_TOKEN = /^[a-z0-9_+.-]{1,32}$/i;
   let settingsReady = false;
   let settingsPersistTimer = null;
+
+  function normalizeQualities(value) {
+    const raw = Array.isArray(value) ? value : String(value || '').split(',');
+    const list = [];
+    raw.forEach((item) => {
+      const quality = String(item || '').trim();
+      if (!QUALITY_TOKEN.test(quality)) return;
+      if (list.some((known) => known.toLowerCase() === quality.toLowerCase())) return;
+      list.push(quality);
+    });
+    if (!list.some((quality) => quality.toLowerCase() === 'best')) list.unshift('best');
+    return list.length ? list : DEFAULT_STREAM_QUALITIES.slice();
+  }
+
+  function qualityLabel(value) {
+    const quality = String(value || '').toLowerCase();
+    if (quality === 'best') return 'BEST';
+    if (quality === 'worst') return 'WORST';
+    return value;
+  }
+
+  function renderQualityOptions() {
+    const select = dom.streamQualitySelect;
+    if (!select) return;
+    const list = state.streamQualities;
+    const signature = list.join(',');
+    if (select.dataset.signature !== signature) {
+      const frag = document.createDocumentFragment();
+      list.forEach((quality) => {
+        const option = document.createElement('option');
+        option.value = quality;
+        option.textContent = qualityLabel(quality);
+        frag.append(option);
+      });
+      select.replaceChildren(frag);
+      select.dataset.signature = signature;
+    }
+    select.value = list.includes(state.streamQuality) ? state.streamQuality : 'best';
+    select.disabled = list.length <= 1 || state.streamSwapping;
+  }
 
   function postToHost(message) {
     if (!HAS_HOST) return false;
@@ -3435,6 +3656,10 @@
     try {
       window.chrome.webview.addEventListener('message', (event) => {
         const value = typeof event.data === 'string' ? event.data : '';
+        if (value.startsWith('deplay:streamswap:')) {
+          handleStreamSwap(value.slice('deplay:streamswap:'.length));
+          return;
+        }
         if (value.startsWith('deplay:toast:')) toast(value.slice('deplay:toast:'.length), 4200);
       });
     } catch { /* host messaging is optional */ }
@@ -3463,7 +3688,7 @@
     const fps = params.get('fps');
     if (fps && FPS_CHOICES.has(fps)) result.fps = fps;
     const quality = params.get('slq');
-    if (quality && STREAM_QUALITIES.has(quality)) result.streamQuality = quality;
+    if (quality && QUALITY_TOKEN.test(quality)) result.streamQuality = quality;
     return result;
   }
 
@@ -3477,7 +3702,10 @@
     setLoop(Boolean(boot.loop));
     if (boot.fps) state.fpsOverride = boot.fps;
     if (dom.fpsSelect) dom.fpsSelect.value = state.fpsOverride;
-    if (boot.streamQuality) state.streamQuality = boot.streamQuality;
+    if (boot.streamQuality) {
+      state.streamQuality = boot.streamQuality;
+      state.streamQualityActive = boot.streamQuality;
+    }
     syncStreamUi();
   }
 
@@ -3522,6 +3750,192 @@
     return !(window.Hls && window.Hls.isSupported && window.Hls.isSupported());
   }
 
+  function stopStreamEngine() {
+    stopStreamUptime();
+    if (state.streamMetaHandler) {
+      dom.video.removeEventListener('loadedmetadata', state.streamMetaHandler);
+      state.streamMetaHandler = null;
+    }
+    if (state.hls) {
+      try { state.hls.destroy(); } catch { /* ignore */ }
+      state.hls = null;
+    }
+    state.streamDvrDragging = false;
+    state.streamLiveOffsetPending = 0;
+    dom.video.pause();
+    dom.video.removeAttribute('src');
+    try { dom.video.load(); } catch { /* ignore */ }
+  }
+
+  function attachStreamSource(source, isHls, options) {
+    const opts = options || {};
+    const live = opts.live !== undefined ? Boolean(opts.live) : state.live;
+    const resume = Number.isFinite(opts.resume) ? opts.resume : 0;
+    const liveOffset = Number.isFinite(opts.liveOffset) ? Math.max(0, opts.liveOffset) : 0;
+    const autoplay = opts.autoplay !== undefined ? Boolean(opts.autoplay) : live;
+    stopStreamEngine();
+    state.streamSource = source;
+    state.live = live;
+    state.streamLatency = 0;
+    state.streamLiveOffsetPending = live && liveOffset > 0.5 ? liveOffset : 0;
+    state.videoReady = false;
+    setLoading(true, live ? t('loading.stream') : t('loading.openingVideo'));
+
+    const seekResume = () => {
+      if (!(resume > 0)) return;
+      try {
+        const ranges = dom.video.seekable;
+        if (ranges && ranges.length) {
+          const start = ranges.start(0);
+          const end = ranges.end(ranges.length - 1);
+          if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+            dom.video.currentTime = clamp(resume, start, Math.max(start, end - 0.5));
+            return;
+          }
+        }
+        dom.video.currentTime = resume;
+      } catch { /* ignore */ }
+    };
+
+    const promoteToStream = () => {
+      if (state.mode === 'stream') return;
+      state.live = true;
+      state.videoIsStream = true;
+      if (state.videoFile) state.videoFile.stream = true;
+      setMode('stream');
+      startStreamUptime();
+      updateStreamInfo();
+    };
+
+    if (isHls && !hlsUnsupported()) {
+      const config = live
+        ? {
+            enableWorker: true,
+            lowLatencyMode: true,
+            liveSyncDurationCount: 3,
+            liveMaxLatencyDurationCount: 3600,
+            maxBufferLength: 10,
+            backBufferLength: 60,
+          }
+        : { enableWorker: true, maxBufferLength: 60 };
+      const hls = new window.Hls(config);
+      state.hls = hls;
+      hls.on(window.Hls.Events.ERROR, (event, data) => {
+        if (!data || !data.fatal) return;
+        if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
+          try { hls.recoverMediaError(); return; } catch { /* fall through */ }
+        }
+        if (state.hls === hls) {
+          try { hls.destroy(); } catch { /* ignore */ }
+          state.hls = null;
+        }
+        try {
+          postToHost(`deplay:error:hls ${data.type || ''} ${data.details || ''} ${data.reason || ''}`.trim());
+        } catch { /* diagnostics are optional */ }
+        setLoading(false);
+        toast(t('toast.streamPlayFailed'), 6500);
+      });
+      hls.on(window.Hls.Events.MEDIA_ATTACHED, () => {
+        try { hls.loadSource(source); } catch { /* error event handles it */ }
+      });
+      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
+        seekResume();
+        updateStreamDvr();
+        if (autoplay) dom.video.play().catch(() => { /* autoplay may be blocked */ });
+      });
+      hls.on(window.Hls.Events.LEVEL_LOADED, (event, data) => {
+        const details = data && data.details;
+        if (!details) return;
+        if (details.live) promoteToStream();
+        else if (state.mode === 'stream') {
+          state.live = false;
+          state.videoIsStream = false;
+          stopStreamUptime();
+          if (state.videoFile) state.videoFile.stream = false;
+          setMode('video');
+        }
+        updateStreamLatency();
+      });
+      hls.on(window.Hls.Events.FRAG_CHANGED, updateStreamLatency);
+      hls.attachMedia(dom.video);
+    } else if (isHls) {
+      setLoading(false);
+      toast(t('toast.streamPlayFailed'), 6500);
+    } else {
+      const onMeta = () => {
+        dom.video.removeEventListener('loadedmetadata', onMeta);
+        if (state.streamMetaHandler === onMeta) state.streamMetaHandler = null;
+        seekResume();
+        if (autoplay) dom.video.play().catch(() => { /* autoplay may be blocked */ });
+      };
+      state.streamMetaHandler = onMeta;
+      dom.video.addEventListener('loadedmetadata', onMeta);
+      dom.video.src = source;
+      dom.video.load();
+      if (autoplay) dom.video.play().catch(() => { /* autoplay may be blocked */ });
+    }
+
+    applyVolume();
+    updatePlaybackState();
+    updateStreamInfo();
+  }
+
+  function handleStreamSwap(raw) {
+    let data = null;
+    try { data = JSON.parse(raw); } catch { data = null; }
+    state.streamSwapping = false;
+    if (!data) {
+      state.streamQuality = state.streamQualityActive;
+      renderQualityOptions();
+      return;
+    }
+    // The host already explained why the switch is not possible (direct link,
+    // local file, missing Streamlink); just re-enable the selector.
+    if (data.cancel) {
+      state.streamQuality = state.streamQualityActive;
+      renderQualityOptions();
+      return;
+    }
+    if (data.error) {
+      state.streamQuality = state.streamQualityActive;
+      renderQualityOptions();
+      toast(t('toast.streamSwapFailed', { message: data.error }), 8000);
+      return;
+    }
+    if (!data.url) {
+      state.streamQuality = state.streamQualityActive;
+      renderQualityOptions();
+      return;
+    }
+
+    const live = Boolean(data.live);
+    const wasPaused = !state.videoReady || dom.video.paused;
+    const liveEdge = live ? streamLiveEdge() : null;
+    const liveOffset = Number.isFinite(liveEdge) && state.videoReady && Number.isFinite(dom.video.currentTime)
+      ? Math.max(0, liveEdge - dom.video.currentTime)
+      : 0;
+    const resume = !live && state.videoReady && Number.isFinite(dom.video.currentTime)
+      ? dom.video.currentTime
+      : 0;
+    if (live !== state.live) {
+      state.live = live;
+      state.videoIsStream = live;
+      if (state.videoFile) state.videoFile.stream = live;
+      setMode(live ? 'stream' : 'video');
+      if (!live) stopStreamUptime();
+    }
+    state.streamQualityActive = data.quality || state.streamQuality;
+    state.streamQuality = state.streamQualityActive;
+    attachStreamSource(data.url, Boolean(data.hls), { live, resume, liveOffset, autoplay: !wasPaused });
+    if (live) startStreamUptime();
+    renderQualityOptions();
+    if (data.fallback) {
+      toast(t('toast.streamQualityFallback', { quality: qualityLabel(state.streamQuality) }), 4200);
+    } else {
+      toast(t('toast.streamQuality', { quality: qualityLabel(state.streamQuality) }), 2400);
+    }
+  }
+
   function playStream(source, name, isHls, error, live, page) {
     if (error) {
       toast(t('toast.streamlinkFailed', { message: error }), 7000);
@@ -3562,76 +3976,7 @@
     dom.video.loop = state.live ? false : state.loop;
     setRate(state.live ? Math.min(state.rate, 1) : state.rate);
     setLoop(state.loop);
-
-    const promoteToStream = () => {
-      if (state.mode === 'stream' || !state.live) return;
-      state.live = true;
-      state.videoIsStream = true;
-      if (state.videoFile) state.videoFile.stream = true;
-      setMode('stream');
-      startStreamUptime();
-      updateStreamInfo();
-    };
-
-    if (isHls && !hlsUnsupported()) {
-      const config = state.live
-        ? {
-            enableWorker: true,
-            lowLatencyMode: true,
-            liveSyncDurationCount: 3,
-            liveMaxLatencyDurationCount: 8,
-            maxBufferLength: 10,
-            backBufferLength: 30,
-          }
-        : { enableWorker: true, maxBufferLength: 60 };
-      const hls = new window.Hls(config);
-      state.hls = hls;
-      hls.on(window.Hls.Events.ERROR, (event, data) => {
-        if (!data || !data.fatal) return;
-        if (data.type === window.Hls.ErrorTypes.MEDIA_ERROR) {
-          try { hls.recoverMediaError(); return; } catch { /* fall through */ }
-        }
-        if (state.hls === hls) {
-          try { hls.destroy(); } catch { /* ignore */ }
-          state.hls = null;
-        }
-        try {
-          postToHost(`deplay:error:hls ${data.type || ''} ${data.details || ''} ${data.reason || ''}`.trim());
-        } catch { /* diagnostics are optional */ }
-        setLoading(false);
-        toast(t('toast.streamPlayFailed'), 6500);
-      });
-      hls.on(window.Hls.Events.MEDIA_ATTACHED, () => {
-        try { hls.loadSource(source); } catch { /* error event handles it */ }
-      });
-      hls.on(window.Hls.Events.MANIFEST_PARSED, () => {
-        if (state.live) dom.video.play().catch(() => { /* autoplay may be blocked */ });
-      });
-      hls.on(window.Hls.Events.LEVEL_LOADED, (event, data) => {
-        const details = data && data.details;
-        if (!details) return;
-        if (details.live) promoteToStream();
-        else if (state.mode === 'stream') {
-          state.live = false;
-          state.videoIsStream = false;
-          stopStreamUptime();
-          if (state.videoFile) state.videoFile.stream = false;
-          setMode('video');
-        }
-        updateStreamLatency();
-      });
-      hls.on(window.Hls.Events.FRAG_CHANGED, updateStreamLatency);
-      hls.attachMedia(dom.video);
-    } else if (isHls) {
-      setLoading(false);
-      toast(t('toast.streamPlayFailed'), 6500);
-      return;
-    } else {
-      dom.video.src = source;
-      dom.video.load();
-      if (state.live) dom.video.play().catch(() => { /* autoplay may be blocked */ });
-    }
-
+    attachStreamSource(source, isHls, { live: state.live, autoplay: state.live, resume: 0 });
     if (state.live) startStreamUptime();
     applyVolume();
     updatePlaybackState();
@@ -3650,6 +3995,13 @@
     if (error) toast(t('toast.streamlinkFailed', { message: error }), 7000);
     if (source) {
       const name = params.get('name') || t('media.stream');
+      const qualities = params.get('qualities');
+      if (qualities) state.streamQualities = normalizeQualities(qualities);
+      const used = params.get('q');
+      if (used && QUALITY_TOKEN.test(used)) {
+        state.streamQuality = used;
+        state.streamQualityActive = used;
+      }
       playStream(
         source,
         name,
@@ -3658,6 +4010,9 @@
         params.get('live') === '1',
         params.get('page') || ''
       );
+      if (params.get('qfallback') === '1') {
+        toast(t('toast.streamQualityFallback', { quality: qualityLabel(state.streamQuality) }), 4200);
+      }
     }
     if (source || error) {
       try { history.replaceState(null, '', window.location.pathname); } catch { /* ignore */ }

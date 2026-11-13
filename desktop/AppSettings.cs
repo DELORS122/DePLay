@@ -22,11 +22,6 @@ namespace DePLay
             "auto", "23.976", "24", "25", "29.97", "30", "48", "50", "59.94", "60", "120"
         };
 
-        private static readonly string[] StreamQualities =
-        {
-            "best", "1080p", "720p", "480p", "360p", "worst"
-        };
-
         [DataMember(Name = "version")]
         public int Version;
 
@@ -189,20 +184,10 @@ namespace DePLay
             }
             if (!knownFps) Fps = "auto";
 
-            bool knownQuality = false;
-            if (!string.IsNullOrEmpty(StreamQuality))
-            {
-                for (int i = 0; i < StreamQualities.Length; i++)
-                {
-                    if (string.Equals(StreamQualities[i], StreamQuality, StringComparison.OrdinalIgnoreCase))
-                    {
-                        StreamQuality = StreamQualities[i];
-                        knownQuality = true;
-                        break;
-                    }
-                }
-            }
-            if (!knownQuality) StreamQuality = "best";
+            // Quality names depend on the stream ("720p60", "audio_only",
+            // "chunked", ...), so only the token shape is validated here.
+            if (Streamlink.IsQualityName(StreamQuality)) StreamQuality = StreamQuality.Trim();
+            else StreamQuality = "best";
         }
 
         public string ToQueryString()

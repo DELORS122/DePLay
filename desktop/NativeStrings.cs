@@ -78,6 +78,22 @@ namespace DePLay
                 "Streamlink не вернул ссылку на поток.",
                 "Streamlink did not return a stream URL.",
                 "Streamlink hat keine Stream-URL zurückgegeben.");
+            Add(map, "streamlink.exitCode",
+                "код возврата {code}",
+                "exit code {code}",
+                "Exit-Code {code}");
+            Add(map, "streamlink.switching",
+                "Переключаем качество…",
+                "Switching quality…",
+                "Qualität wird umgeschaltet…");
+            Add(map, "streamlink.qualityDirect",
+                "Для прямой ссылки качество задаётся источником.",
+                "A direct link gets its quality from the source.",
+                "Bei einem direkten Link gibt die Quelle die Qualität vor.");
+            Add(map, "streamlink.qualityLocal",
+                "Качество сохранено для следующих запусков.",
+                "The quality is saved for the next launches.",
+                "Die Qualität wird für die nächsten Starts gespeichert.");
             return map;
         }
 

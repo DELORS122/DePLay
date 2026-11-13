@@ -223,8 +223,10 @@ canvas {
   padding: 90px clamp(20px, 5vw, 64px) 80px;
 }
 
+.player-card.has-media .empty-state,
 .mode-video .empty-state,
-.mode-image .empty-state {
+.mode-image .empty-state,
+.mode-stream .empty-state {
   display: none;
 }
 
@@ -668,7 +670,8 @@ kbd {
 }
 
 .ui-idle .stage-brand,
-.mode-video.is-playing .stage-brand {
+.mode-video.is-playing .stage-brand,
+.mode-stream.is-playing .stage-brand {
   opacity: 0;
   transform: translateY(-6px);
 }
@@ -962,26 +965,26 @@ kbd {
   width: 88px;
 }
 
-#muteBtn .vol-low,
-#muteBtn .vol-mute {
+.mute-btn .vol-low,
+.mute-btn .vol-mute {
   display: none;
 }
 
-#muteBtn[data-level="low"] .vol-high,
-#muteBtn[data-level="low"] .vol-mute {
+.mute-btn[data-level="low"] .vol-high,
+.mute-btn[data-level="low"] .vol-mute {
   display: none;
 }
 
-#muteBtn[data-level="low"] .vol-low {
+.mute-btn[data-level="low"] .vol-low {
   display: block;
 }
 
-#muteBtn[data-level="mute"] .vol-high,
-#muteBtn[data-level="mute"] .vol-low {
+.mute-btn[data-level="mute"] .vol-high,
+.mute-btn[data-level="mute"] .vol-low {
   display: none;
 }
 
-#muteBtn[data-level="mute"] .vol-mute {
+.mute-btn[data-level="mute"] .vol-mute {
   display: block;
   color: var(--accent-bright);
 }
@@ -1409,6 +1412,87 @@ input[type="range"]::-moz-range-thumb {
   background: none;
   border-color: var(--line);
   color: var(--dim);
+}
+
+.stream-dvr {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 3px 0 5px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.stream-dvr[hidden] {
+  display: none !important;
+}
+
+.stream-dvr-offset {
+  flex: none;
+  min-width: 46px;
+  color: var(--muted);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.stream-dvr-track {
+  position: relative;
+  flex: 1 1 auto;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.13);
+}
+
+.stream-dvr-track::before {
+  content: '';
+  position: absolute;
+  inset: -7px 0;
+}
+
+.stream-dvr-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent) 58%, var(--accent-bright));
+  box-shadow: 0 0 14px rgba(207, 23, 49, 0.42);
+}
+
+.stream-dvr-thumb {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 10px;
+  height: 10px;
+  background: #fff;
+  border: 2px solid var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 3px rgba(207, 23, 49, 0.18);
+  transition: transform 0.12s ease;
+}
+
+.stream-dvr:hover .stream-dvr-thumb,
+.stream-dvr:focus-visible .stream-dvr-thumb,
+.stream-dvr.is-scrubbing .stream-dvr-thumb {
+  transform: translate(-50%, -50%) scale(1.28);
+}
+
+.stream-dvr-live {
+  flex: none;
+  color: var(--accent-bright);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+}
+
+.stream-dvr:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 3px;
 }
 
 .quality-wrap {

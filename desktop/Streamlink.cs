@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace DePLay
 {
@@ -13,10 +15,17 @@ namespace DePLay
     /// </summary>
     internal static class Streamlink
     {
-        public static readonly string[] Qualities =
+        /// <summary>
+        /// Shown before the real list arrives (and used when --json fails).
+        /// The player replaces it with the streams reported for the current URL.
+        /// </summary>
+        public static readonly string[] DefaultQualities =
         {
             "best", "1080p", "720p", "480p", "360p", "worst"
         };
+
+        private static readonly Regex Ansi = new Regex(
+            "\u001B\\[[0-9;?]*[ -/]*[@-~]", RegexOptions.Compiled);
 
         private static readonly string[] MediaExtensions =
         {
@@ -30,6 +39,36 @@ namespace DePLay
             if (string.IsNullOrEmpty(value)) return false;
             return value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
                    value.StartsWith("https://", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Streamlink stream names are not limited to a fixed list: a Twitch VOD
+        /// can offer "720p60", "audio_only" or "chunked", while another stream
+        /// only has "source". Accept any short token and let Streamlink decide.
+        /// </summary>
+        public static bool IsQualityName(string value)
+        {
+            if (string.IsNullOrEmpty(value)) return false;
+            string quality = value.Trim();
+            if (quality.Length == 0 || quality.Length > 32) return false;
+            for (int i = 0; i < quality.Length; i++)
+            {
+                char c = quality[i];
+                bool allowed = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+                               (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '+' || c == '.';
+                if (!allowed) return false;
+            }
+            return true;
+        }
+
+        public static bool ContainsQuality(string[] qualities, string quality)
+        {
+            if (qualities == null || string.IsNullOrEmpty(quality)) return false;
+            for (int i = 0; i < qualities.Length; i++)
+            {
+                if (string.Equals(qualities[i], quality, StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -280,19 +319,105 @@ namespace DePLay
             }
             if (string.IsNullOrEmpty(quality)) quality = "best";
             else quality = quality.Trim().Trim('"');
-            if (quality.Length == 0) quality = "best";
+            if (quality.Length == 0 || !IsQualityName(quality)) quality = "best";
 
+            RunResult result = Run(executable, "--stream-url " + Quote(pageUrl) + " " + Quote(quality), timeoutMs);
+            if (result.TimedOut)
+            {
+                error = NativeStrings.Get("streamlink.timeout");
+                return false;
+            }
+            string found = FirstUrl(result.Output);
+            // Some Streamlink builds print the resolved URL on stderr
+            // (for example when a plugin emits warnings first), so check it
+            // as a fallback instead of failing with "no URL".
+            if (found == null) found = FirstUrl(result.Error);
+            if (found == null)
+            {
+                error = FailureDetails(result);
+                return false;
+            }
+            streamUrl = found;
+            return true;
+        }
+
+        /// <summary>
+        /// Asks Streamlink for the real stream list of a page/VOD. The returned
+        /// names are used to fill the quality selector, so plugins that expose
+        /// "720p60", "audio_only" or "chunked" work instead of failing on a
+        /// hard-coded "720p" request.
+        /// </summary>
+        public static bool ListStreams(
+            string executable,
+            string pageUrl,
+            int timeoutMs,
+            out string[] qualities,
+            out string error)
+        {
+            qualities = new string[0];
+            error = null;
+            pageUrl = NormalizeUrl(pageUrl);
+            if (string.IsNullOrEmpty(executable) || !File.Exists(executable))
+            {
+                error = NativeStrings.Get("streamlink.notFound");
+                return false;
+            }
+            if (!IsHttpUrl(pageUrl))
+            {
+                error = NativeStrings.Format("streamlink.failed", "details", pageUrl ?? string.Empty);
+                return false;
+            }
+
+            RunResult result = Run(executable, "--json " + Quote(pageUrl), timeoutMs);
+            if (result.TimedOut)
+            {
+                error = NativeStrings.Get("streamlink.timeout");
+                return false;
+            }
+            List<string> keys = ParseStreamKeys(result.Output);
+            if (keys.Count == 0) keys = ParseStreamKeys(result.Error);
+            if (keys.Count == 0)
+            {
+                error = FailureDetails(result);
+                return false;
+            }
+            qualities = SortQualities(keys).ToArray();
+            return true;
+        }
+
+        private sealed class RunResult
+        {
+            public bool TimedOut;
+            public int ExitCode;
+            public string Output = string.Empty;
+            public string Error = string.Empty;
+        }
+
+        private static RunResult Run(string executable, string arguments, int timeoutMs)
+        {
+            RunResult result = new RunResult();
             Process process = null;
             try
             {
                 ProcessStartInfo info = new ProcessStartInfo();
                 info.FileName = executable;
-                info.Arguments = "--stream-url " + Quote(pageUrl) + " " + Quote(quality);
+                info.Arguments = arguments;
                 info.WorkingDirectory = Path.GetDirectoryName(executable);
                 info.UseShellExecute = false;
                 info.CreateNoWindow = true;
                 info.RedirectStandardOutput = true;
                 info.RedirectStandardError = true;
+                // Streamlink writes UTF-8; without this a Russian Windows code
+                // page turns plugin errors into unreadable text.
+                try
+                {
+                    UTF8Encoding utf8 = new UTF8Encoding(false);
+                    info.StandardOutputEncoding = utf8;
+                    info.StandardErrorEncoding = utf8;
+                }
+                catch { /* .NET 4.0: keep the platform default */ }
+
+                Log.Write("streamlink: " + executable + " " + arguments);
 
                 StringBuilder output = new StringBuilder();
                 StringBuilder errors = new StringBuilder();
@@ -303,12 +428,12 @@ namespace DePLay
                 process.OutputDataReceived += delegate(object sender, DataReceivedEventArgs e)
                 {
                     if (e.Data == null) return;
-                    lock (sync) { if (output.Length < 65536) output.AppendLine(e.Data); }
+                    lock (sync) { if (output.Length < 262144) output.AppendLine(e.Data); }
                 };
                 process.ErrorDataReceived += delegate(object sender, DataReceivedEventArgs e)
                 {
                     if (e.Data == null) return;
-                    lock (sync) { if (errors.Length < 65536) errors.AppendLine(e.Data); }
+                    lock (sync) { if (errors.Length < 262144) errors.AppendLine(e.Data); }
                 };
 
                 process.Start();
@@ -322,34 +447,27 @@ namespace DePLay
                     catch { /* already gone */ }
                     try { process.WaitForExit(2000); }
                     catch { /* ignore */ }
-                    error = NativeStrings.Get("streamlink.timeout");
-                    return false;
+                    result.TimedOut = true;
+                    Log.Write("streamlink: timeout");
+                    return result;
                 }
                 process.WaitForExit();
 
-                string text;
-                string errorText;
-                lock (sync) { text = output.ToString(); errorText = errors.ToString(); }
-                string found = FirstUrl(text);
-                // Some Streamlink builds print the resolved URL on stderr
-                // (for example when a plugin emits warnings first), so check it
-                // as a fallback instead of failing with "no URL".
-                if (found == null) found = FirstUrl(errorText);
-                if (found == null)
+                lock (sync)
                 {
-                    string details = LastLines(errorText, 3);
-                    if (details.Length == 0) details = NativeStrings.Get("streamlink.noUrl");
-                    error = NativeStrings.Format("streamlink.failed", "details", details);
-                    return false;
+                    result.Output = output.ToString();
+                    result.Error = errors.ToString();
                 }
-                streamUrl = found;
-                return true;
+                result.ExitCode = process.ExitCode;
+                Log.Write("streamlink exit code: " + result.ExitCode);
+                return result;
             }
             catch (Exception exception)
             {
                 Log.Error("streamlink", exception);
-                error = NativeStrings.Format("streamlink.failed", "details", exception.Message);
-                return false;
+                result.ExitCode = -1;
+                result.Error = exception.Message;
+                return result;
             }
             finally
             {
@@ -361,10 +479,203 @@ namespace DePLay
             }
         }
 
+        private static string FailureDetails(RunResult result)
+        {
+            string details = LastLines(result.Error, 3);
+            if (details.Length == 0) details = LastLines(result.Output, 3);
+            if (details.Length == 0) details = NativeStrings.Get("streamlink.noUrl");
+            string code = NativeStrings.Format("streamlink.exitCode", "code", result.ExitCode.ToString(CultureInfo.InvariantCulture));
+            return details + " · " + code;
+        }
+
+        private static List<string> SortQualities(List<string> keys)
+        {
+            List<string> unique = new List<string>();
+            for (int i = 0; i < keys.Count; i++)
+            {
+                string key = (keys[i] ?? string.Empty).Trim();
+                if (!IsQualityName(key)) continue;
+                if (!ContainsQuality(unique.ToArray(), key)) unique.Add(key);
+            }
+            unique.Sort(delegate(string a, string b)
+            {
+                int rankA = QualityRank(a);
+                int rankB = QualityRank(b);
+                if (rankA != rankB) return rankA.CompareTo(rankB);
+                return string.Compare(a, b, StringComparison.OrdinalIgnoreCase);
+            });
+            if (!ContainsQuality(unique.ToArray(), "best")) unique.Insert(0, "best");
+            return unique;
+        }
+
+        private static int QualityRank(string quality)
+        {
+            if (string.Equals(quality, "best", StringComparison.OrdinalIgnoreCase)) return -100000;
+            if (string.Equals(quality, "worst", StringComparison.OrdinalIgnoreCase)) return 100000;
+            int digits = 0;
+            while (digits < quality.Length && quality[digits] >= '0' && quality[digits] <= '9') digits++;
+            if (digits > 0)
+            {
+                int height;
+                if (int.TryParse(quality.Substring(0, digits), NumberStyles.Integer, CultureInfo.InvariantCulture, out height))
+                    return -height;
+            }
+            if (quality.IndexOf("audio", StringComparison.OrdinalIgnoreCase) >= 0) return 90000;
+            return 50000;
+        }
+
         private static string Quote(string value)
         {
             if (value == null) return "\"\"";
             return "\"" + value.Replace("\"", "\\\"") + "\"";
+        }
+
+        // ── Minimal JSON reader for `streamlink --json` ──────────
+        // Only the top-level "streams" object keys are needed, but parsing the
+        // whole document avoids being confused by nested objects, escaped
+        // quotes and unicode escapes in plugin metadata.
+        private static List<string> ParseStreamKeys(string json)
+        {
+            List<string> keys = new List<string>();
+            if (string.IsNullOrEmpty(json)) return keys;
+            int index = json.IndexOf('{');
+            if (index < 0) return keys;
+            try
+            {
+                Dictionary<string, object> root = ParseJsonValue(json, ref index) as Dictionary<string, object>;
+                if (root == null) return keys;
+                object streamsValue;
+                if (!root.TryGetValue("streams", out streamsValue)) return keys;
+                Dictionary<string, object> streams = streamsValue as Dictionary<string, object>;
+                if (streams == null) return keys;
+                foreach (KeyValuePair<string, object> pair in streams) keys.Add(pair.Key);
+            }
+            catch { /* malformed output: the caller reports a normal error */ }
+            return keys;
+        }
+
+        private static object ParseJsonValue(string text, ref int index)
+        {
+            SkipWhitespace(text, ref index);
+            if (index >= text.Length) return null;
+            char c = text[index];
+            if (c == '{') return ParseJsonObject(text, ref index);
+            if (c == '[') return ParseJsonArray(text, ref index);
+            if (c == '"') return ParseJsonString(text, ref index);
+            if (c == 't' && index + 3 < text.Length && text.Substring(index, 4) == "true")
+            {
+                index += 4;
+                return true;
+            }
+            if (c == 'f' && index + 4 < text.Length && text.Substring(index, 5) == "false")
+            {
+                index += 5;
+                return false;
+            }
+            if (c == 'n' && index + 3 < text.Length && text.Substring(index, 4) == "null")
+            {
+                index += 4;
+                return null;
+            }
+            int start = index;
+            while (index < text.Length && "+-0123456789.eE".IndexOf(text[index]) >= 0) index++;
+            if (index == start) index++;
+            string number = text.Substring(start, index - start);
+            double parsed;
+            if (double.TryParse(number, NumberStyles.Float, CultureInfo.InvariantCulture, out parsed)) return parsed;
+            return null;
+        }
+
+        private static Dictionary<string, object> ParseJsonObject(string text, ref int index)
+        {
+            Dictionary<string, object> map = new Dictionary<string, object>();
+            index += 1;
+            while (index < text.Length)
+            {
+                SkipWhitespace(text, ref index);
+                if (index >= text.Length) break;
+                char c = text[index];
+                if (c == '}') { index += 1; break; }
+                if (c == ',') { index += 1; continue; }
+                if (c != '"') { index += 1; continue; }
+                string key = ParseJsonString(text, ref index);
+                SkipWhitespace(text, ref index);
+                if (index >= text.Length || text[index] != ':') continue;
+                index += 1;
+                object value = ParseJsonValue(text, ref index);
+                if (key != null) map[key] = value;
+            }
+            return map;
+        }
+
+        private static List<object> ParseJsonArray(string text, ref int index)
+        {
+            List<object> list = new List<object>();
+            index += 1;
+            while (index < text.Length)
+            {
+                SkipWhitespace(text, ref index);
+                if (index >= text.Length) break;
+                char c = text[index];
+                if (c == ']') { index += 1; break; }
+                if (c == ',') { index += 1; continue; }
+                list.Add(ParseJsonValue(text, ref index));
+            }
+            return list;
+        }
+
+        private static string ParseJsonString(string text, ref int index)
+        {
+            if (index >= text.Length || text[index] != '"') return null;
+            index += 1;
+            StringBuilder value = new StringBuilder();
+            while (index < text.Length)
+            {
+                char c = text[index];
+                index += 1;
+                if (c == '"') return value.ToString();
+                if (c != '\\')
+                {
+                    value.Append(c);
+                    continue;
+                }
+                if (index >= text.Length) break;
+                char escape = text[index];
+                index += 1;
+                switch (escape)
+                {
+                    case 'n': value.Append('\n'); break;
+                    case 'r': value.Append('\r'); break;
+                    case 't': value.Append('\t'); break;
+                    case 'b': value.Append('\b'); break;
+                    case 'f': value.Append('\f'); break;
+                    case 'u':
+                        if (index + 4 <= text.Length)
+                        {
+                            int code;
+                            if (int.TryParse(text.Substring(index, 4), NumberStyles.HexNumber, CultureInfo.InvariantCulture, out code))
+                                value.Append((char)code);
+                            index += 4;
+                        }
+                        break;
+                    default: value.Append(escape); break;
+                }
+            }
+            return value.ToString();
+        }
+
+        private static void SkipWhitespace(string text, ref int index)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index])) index += 1;
+        }
+
+        private static string CleanLine(string value)
+        {
+            string line = Ansi.Replace(value ?? string.Empty, string.Empty);
+            line = line.Trim().Trim('\uFEFF');
+            if (line.Length >= 2 && line[0] == '"' && line[line.Length - 1] == '"')
+                line = line.Substring(1, line.Length - 2).Trim();
+            return line;
         }
 
         private static string FirstUrl(string text)
@@ -373,7 +684,7 @@ namespace DePLay
             string[] lines = text.Split(new string[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
             for (int i = 0; i < lines.Length; i++)
             {
-                string line = lines[i].Trim();
+                string line = CleanLine(lines[i]);
                 if (IsHttpUrl(line)) return line;
             }
             return null;
@@ -386,7 +697,7 @@ namespace DePLay
             List<string> kept = new List<string>();
             for (int i = lines.Length - 1; i >= 0 && kept.Count < count; i--)
             {
-                string line = lines[i].Trim();
+                string line = CleanLine(lines[i]);
                 if (line.Length == 0) continue;
                 if (line.StartsWith("[cli][info]", StringComparison.OrdinalIgnoreCase)) continue;
                 kept.Insert(0, line);
@@ -395,3 +706,4 @@ namespace DePLay
         }
     }
 }
+
